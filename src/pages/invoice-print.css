@@ -1,0 +1,959 @@
+/* =========================================================
+   HFL LOGISTICS — A5 LANDSCAPE INVOICE
+   Premium Clean Blue UI
+========================================================= */
+
+* {
+  box-sizing: border-box;
+}
+
+/* =========================================================
+   PAGE WRAPPER
+========================================================= */
+
+.bill-print-wrapper {
+  min-height: 100vh;
+  padding: 22px;
+  background:
+    radial-gradient(circle at top left, #eaf3ff 0%, transparent 35%),
+    #eef3f9;
+
+  color: #0f172a;
+
+  font-family:
+    "Noto Sans Khmer",
+    "Noto Sans",
+    Arial,
+    sans-serif;
+}
+
+/* =========================================================
+   TOOLBAR
+========================================================= */
+
+.bill-toolbar {
+  width: 210mm;
+  max-width: 100%;
+
+  margin: 0 auto 14px;
+
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+
+  gap: 10px;
+}
+
+.bill-toolbar-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  gap: 7px;
+
+  min-height: 38px;
+
+  padding: 8px 16px;
+
+  border: 1px solid #d7e0ec;
+  border-radius: 10px;
+
+  background: #ffffff;
+  color: #334155;
+
+  font-size: 12px;
+  font-weight: 700;
+
+  cursor: pointer;
+
+  transition:
+    background 0.2s ease,
+    border-color 0.2s ease,
+    transform 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.bill-toolbar-btn:hover {
+  background: #f8fafc;
+  border-color: #b9c8dc;
+
+  box-shadow:
+    0 4px 12px rgba(15, 23, 42, 0.08);
+
+  transform: translateY(-1px);
+}
+
+.bill-toolbar-btn.primary {
+  background: linear-gradient(
+    135deg,
+    #2563eb,
+    #1d4ed8
+  );
+
+  border-color: #2563eb;
+  color: #ffffff;
+
+  box-shadow:
+    0 5px 14px rgba(37, 99, 235, 0.22);
+}
+
+.bill-toolbar-btn.primary:hover {
+  background: linear-gradient(
+    135deg,
+    #1d4ed8,
+    #1e40af
+  );
+}
+
+/* =========================================================
+   A5 PAPER
+========================================================= */
+
+.a5-bill {
+  width: 210mm;
+  height: 148mm;
+  min-height: 148mm;
+
+  margin: 0 auto;
+  padding: 2.5mm;
+
+  background: #ffffff;
+
+  border: 1px solid #d6deea;
+
+  box-shadow:
+    0 18px 45px rgba(15, 23, 42, 0.14);
+
+  font-size: 6px;
+  line-height: 1.2;
+
+  overflow: hidden;
+}
+
+/* =========================================================
+   HEADER
+========================================================= */
+
+.paper-header {
+  display: grid;
+
+  grid-template-columns:
+    0.9fr
+    2.2fr
+    0.65fr;
+
+  height: 15mm;
+
+  border: 1px solid #163b6d;
+
+  background: #ffffff;
+}
+
+.paper-logo-area {
+  display: flex;
+  flex-direction: column;
+
+  align-items: center;
+  justify-content: center;
+
+  padding: 1mm;
+
+  border-right: 1px solid #163b6d;
+
+  background: #ffffff;
+}
+
+.hfl-logo {
+  width: 26mm;
+  height: 12mm;
+
+  object-fit: contain;
+}
+
+.logo-company {
+  margin-top: 0.5mm;
+
+  text-align: center;
+
+  color: #0f172a;
+
+  font-size: 4.5px;
+  font-weight: 900;
+}
+
+.logo-company span {
+  display: block;
+
+  margin-top: 0.5mm;
+
+  color: #64748b;
+
+  font-size: 3.8px;
+  font-weight: 600;
+}
+
+.paper-company-title {
+  display: flex;
+  flex-direction: column;
+
+  align-items: center;
+  justify-content: center;
+
+  text-align: center;
+
+  padding: 1mm;
+
+  border-right: 1px solid #163b6d;
+}
+
+.khmer-company {
+  color: #0f3f7a;
+
+  font-size: 8px;
+  font-weight: 900;
+}
+
+.english-company {
+  margin-top: 1px;
+
+  color: #0f172a;
+
+  font-size: 7px;
+  font-weight: 900;
+}
+
+.chinese-company {
+  margin-top: 1px;
+
+  color: #475569;
+
+  font-size: 6px;
+  font-weight: 800;
+}
+
+.paper-invoice-title {
+  display: flex;
+  flex-direction: column;
+
+  align-items: center;
+  justify-content: center;
+
+  padding: 1mm;
+
+  color: #0f3f7a;
+
+  font-size: 7px;
+  font-weight: 900;
+}
+
+.paper-invoice-title span {
+  margin-top: 2px;
+
+  color: #0f172a;
+
+  font-size: 8px;
+  font-weight: 900;
+}
+
+/* =========================================================
+   TOP INFORMATION
+========================================================= */
+
+.top-info {
+  display: grid;
+
+  grid-template-columns:
+    1.35fr
+    0.72fr
+    1.15fr;
+
+  height: 25mm;
+
+  border-left: 1px solid #163b6d;
+  border-right: 1px solid #163b6d;
+  border-bottom: 1px solid #163b6d;
+
+  background: #ffffff;
+}
+
+/* =========================================================
+   CUSTOMER
+========================================================= */
+
+.customer-info {
+  padding: 3mm 2.5mm 2mm;
+
+  border-right: 1px solid #163b6d;
+
+  background:
+    linear-gradient(
+      180deg,
+      #ffffff 0%,
+      #f8fbff 100%
+    );
+}
+
+.form-row {
+  display: flex;
+
+  align-items: center;
+
+  gap: 2mm;
+
+  min-height: 5mm;
+
+  margin-bottom: 1.5mm;
+
+  padding: 0.7mm 1mm;
+
+  border-radius: 1.5mm;
+
+  font-size: 6px;
+}
+
+.form-row:nth-child(even) {
+  background: #f2f6fb;
+}
+
+.form-row span {
+  min-width: 27mm;
+
+  color: #334155;
+
+  font-weight: 800;
+}
+
+.form-row strong {
+  color: #0f172a;
+
+  font-weight: 900;
+}
+
+/* =========================================================
+   STATUS
+========================================================= */
+
+.status-area {
+  border-right: 1px solid #163b6d;
+
+  background: #ffffff;
+}
+
+.status-row {
+  display: grid;
+
+  grid-template-columns: 1fr 8mm;
+
+  height: 6.25mm;
+
+  border-bottom: 1px solid #d6deea;
+}
+
+.status-row:last-child {
+  border-bottom: none;
+}
+
+.status-row > span {
+  display: flex;
+
+  align-items: center;
+  justify-content: flex-end;
+
+  padding-right: 1.5mm;
+
+  color: #334155;
+
+  font-size: 6px;
+  font-weight: 800;
+}
+
+.checkbox {
+  display: flex;
+
+  align-items: center;
+  justify-content: center;
+
+  border-left: 1px solid #d6deea;
+
+  color: #2563eb;
+
+  font-size: 8px;
+  font-weight: 900;
+}
+
+/* =========================================================
+   DOCUMENT / ABA
+========================================================= */
+
+.document-info {
+  position: relative;
+
+  padding: 1.8mm;
+
+  overflow: visible;
+
+  background: #ffffff;
+}
+
+.doc-no {
+  color: #334155;
+
+  font-size: 7px;
+  font-weight: 700;
+}
+
+.doc-no strong {
+  margin-left: 5px;
+
+  color: #0f172a;
+
+  font-size: 6.5px;
+}
+
+/* =========================================================
+   ABA PAYMENT
+========================================================= */
+
+.aba-payment {
+  display: flex;
+
+  align-items: flex-start;
+  justify-content: space-between;
+
+  gap: 2mm;
+
+  margin-top: 1.5mm;
+}
+
+.aba-details {
+  flex: 1;
+
+  min-width: 0;
+
+  padding-top: 1mm;
+}
+
+.aba-label {
+  color: #0f3f7a;
+
+  font-size: 6.5px;
+  font-weight: 900;
+}
+
+.aba-account {
+  margin-top: 1mm;
+
+  color: #0f172a;
+
+  font-size: 6.5px;
+  font-weight: 900;
+}
+
+.aba-holder {
+  margin-top: 1mm;
+
+  color: #475569;
+
+  font-size: 5.5px;
+}
+
+/* =========================================================
+   ABA QR
+========================================================= */
+
+.aba-qr {
+  width: 24mm;
+  height: 24mm;
+
+  flex: 0 0 24mm;
+
+  display: flex;
+
+  align-items: center;
+  justify-content: center;
+
+  position: relative;
+
+  transform: translateY(-4mm);
+
+  z-index: 10;
+
+  padding: 1mm;
+
+  background: #ffffff;
+
+  border: 1px solid #e2e8f0;
+  border-radius: 1.5mm;
+
+  box-shadow:
+    0 2px 7px rgba(15, 23, 42, 0.08);
+}
+
+.aba-qr img {
+  display: block;
+
+  width: 22mm;
+  height: 22mm;
+
+  max-width: 22mm;
+  max-height: 22mm;
+
+  object-fit: contain;
+}
+
+.aba-qr-empty {
+  width: 20mm;
+  height: 20mm;
+
+  display: flex;
+
+  align-items: center;
+  justify-content: center;
+
+  text-align: center;
+
+  border: 1px dashed #94a3b8;
+
+  border-radius: 2mm;
+
+  color: #64748b;
+
+  font-size: 5px;
+  font-weight: 800;
+}
+
+/* =========================================================
+   SHIPMENT ROW
+========================================================= */
+
+.shipment-row {
+  display: grid;
+
+  grid-template-columns:
+    1fr
+    1fr
+    1fr
+    1fr;
+
+  height: 5.5mm;
+
+  border-left: 1px solid #163b6d;
+  border-right: 1px solid #163b6d;
+  border-bottom: 1px solid #163b6d;
+
+  background: #ffffff;
+}
+
+.shipment-row > div {
+  display: flex;
+
+  align-items: center;
+
+  gap: 3px;
+
+  padding: 1mm 1.5mm;
+
+  border-right: 1px solid #d6deea;
+
+  color: #475569;
+
+  font-size: 5.2px;
+}
+
+.shipment-row > div:last-child {
+  border-right: none;
+}
+
+.shipment-row strong {
+  color: #0f172a;
+
+  font-weight: 900;
+}
+
+/* =========================================================
+   TABLE
+========================================================= */
+
+.paper-table {
+  width: 100%;
+
+  border-collapse: collapse;
+
+  table-layout: fixed;
+
+  font-size: 5.2px;
+}
+
+.paper-table th,
+.paper-table td {
+  border: 1px solid #cbd5e1;
+
+  padding: 0.8mm 0.5mm;
+
+  text-align: center;
+
+  vertical-align: middle;
+}
+
+.paper-table th {
+  height: 6mm;
+
+  padding: 0.7mm;
+
+  background:
+    linear-gradient(
+      180deg,
+      #15569b,
+      #0f3f7a
+    );
+
+  color: #ffffff;
+
+  font-weight: 900;
+
+  line-height: 1.15;
+}
+
+.paper-table td {
+  height: 5mm;
+
+  color: #1e293b;
+
+  background: #ffffff;
+}
+
+.paper-table tbody tr:nth-child(even) td {
+  background: #f8fafc;
+}
+
+.paper-table tbody tr:hover td {
+  background: #eff6ff;
+}
+
+.paper-table th:nth-child(1) {
+  width: 5%;
+}
+
+.paper-table th:nth-child(2) {
+  width: 19%;
+}
+
+.paper-table th:nth-child(3) {
+  width: 13%;
+}
+
+.paper-table th:nth-child(4) {
+  width: 17%;
+}
+
+.paper-table th:nth-child(5) {
+  width: 7%;
+}
+
+.paper-table th:nth-child(6) {
+  width: 8%;
+}
+
+.paper-table th:nth-child(7) {
+  width: 12%;
+}
+
+.paper-table th:nth-child(8) {
+  width: 8%;
+}
+
+.paper-table th:nth-child(9) {
+  width: 11%;
+}
+
+.item-name {
+  text-align: center;
+
+  font-weight: 700;
+}
+
+.amount {
+  text-align: right !important;
+
+  padding-right: 2mm !important;
+
+  color: #0f172a;
+
+  font-weight: 900;
+}
+
+.empty-row td {
+  height: 5mm;
+}
+
+/* =========================================================
+   NOTES + TOTAL
+========================================================= */
+
+.bottom-section {
+  display: grid;
+
+  grid-template-columns: 1fr 48mm;
+
+  height: 15mm;
+
+  border-left: 1px solid #163b6d;
+  border-right: 1px solid #163b6d;
+  border-bottom: 1px solid #163b6d;
+
+  background: #ffffff;
+}
+
+.notes-area {
+  padding: 1.8mm 2mm;
+
+  border-right: 1px solid #d6deea;
+
+  color: #334155;
+
+  font-size: 5px;
+  line-height: 1.35;
+}
+
+.notes-area > div {
+  margin-bottom: 1.5px;
+}
+
+.chinese-note {
+  color: #334155;
+
+  font-weight: 600;
+}
+
+.total-area {
+  padding: 1.5mm 2mm;
+
+  background: #f8fbff;
+
+  font-size: 6.5px;
+}
+
+.total-area > div {
+  display: flex;
+
+  align-items: center;
+  justify-content: space-between;
+
+  min-height: 4mm;
+
+  padding: 1px 0;
+
+  color: #475569;
+}
+
+.total-area strong {
+  color: #0f172a;
+}
+
+.total-final {
+  margin-top: 1mm;
+
+  padding-top: 2mm !important;
+
+  border-top: 1px solid #94a3b8;
+
+  color: #0f3f7a !important;
+
+  font-size: 8px;
+  font-weight: 900;
+}
+
+.total-final strong {
+  color: #2563eb;
+
+  font-size: 8px;
+}
+
+/* =========================================================
+   SIGNATURE
+========================================================= */
+
+.signature-area {
+  display: grid;
+
+  grid-template-columns: 1fr 1fr;
+
+  height: 14mm;
+
+  border-left: 1px solid #163b6d;
+  border-right: 1px solid #163b6d;
+  border-bottom: 1px solid #163b6d;
+
+  background: #ffffff;
+}
+
+.signature-area > div {
+  padding: 1.5mm;
+
+  text-align: center;
+
+  border-right: 1px solid #d6deea;
+
+  background:
+    linear-gradient(
+      180deg,
+      #f8fbff,
+      #ffffff
+    );
+
+  color: #334155;
+
+  font-size: 6px;
+}
+
+.signature-area > div:last-child {
+  border-right: none;
+}
+
+.signature-area strong,
+.signature-area span {
+  display: block;
+}
+
+.signature-area strong {
+  color: #0f3f7a;
+
+  font-weight: 900;
+}
+
+.signature-line {
+  width: 35mm;
+
+  height: 5mm;
+
+  margin: 1mm auto 0;
+
+  border-bottom: 1px solid #334155;
+}
+
+/* =========================================================
+   SCREEN RESPONSIVE
+========================================================= */
+
+@media screen and (max-width: 900px) {
+  .bill-print-wrapper {
+    padding: 10px;
+    overflow-x: auto;
+  }
+
+  .a5-bill {
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  .bill-toolbar {
+    min-width: 210mm;
+  }
+}
+
+/* =========================================================
+   PRINT — A5 LANDSCAPE ONLY
+========================================================= */
+
+@page {
+  size: A5 landscape;
+  margin: 0;
+}
+
+@media print {
+
+  html,
+  body,
+  #root {
+    width: 210mm !important;
+    height: 148mm !important;
+
+    min-width: 210mm !important;
+    min-height: 148mm !important;
+
+    margin: 0 !important;
+    padding: 0 !important;
+
+    background: #ffffff !important;
+  }
+
+  body {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  body * {
+    visibility: hidden !important;
+  }
+
+  .bill-print-wrapper,
+  .bill-print-wrapper * {
+    visibility: visible !important;
+  }
+
+  .bill-print-wrapper {
+    position: absolute !important;
+
+    left: 0 !important;
+    top: 0 !important;
+
+    width: 210mm !important;
+    height: 148mm !important;
+
+    min-height: 148mm !important;
+
+    margin: 0 !important;
+    padding: 0 !important;
+
+    background: #ffffff !important;
+  }
+
+  .bill-toolbar,
+  .no-print {
+    display: none !important;
+  }
+
+  .a5-bill {
+    width: 210mm !important;
+    height: 148mm !important;
+
+    min-height: 148mm !important;
+
+    margin: 0 !important;
+    padding: 2.5mm !important;
+
+    border: none !important;
+
+    box-shadow: none !important;
+
+    overflow: hidden !important;
+
+    background: #ffffff !important;
+  }
+
+  /* QR position for print */
+  .aba-qr {
+    transform: translateY(-4mm) !important;
+
+    z-index: 10 !important;
+
+    box-shadow: none !important;
+  }
+
+  .paper-table th {
+    background: #0f3f7a !important;
+    color: #ffffff !important;
+  }
+
+  .paper-table tbody tr:nth-child(even) td {
+    background: #f8fafc !important;
+  }
+
+  .total-area {
+    background: #f8fbff !important;
+  }
+
+  .signature-area > div {
+    background: #f8fbff !important;
+  }
+}

@@ -1,0 +1,9 @@
+HFL Logistics - Original ABA KHQR Asset
+
+Place the ORIGINAL ABA KHQR image here as:
+public/assets/aba-khqr.png
+
+The system does not generate, redraw, recolor, crop, or modify the QR code.
+Keep the original image and aspect ratio so it remains scannable when printed.
+
+Alternatively, an authorized Admin can upload the original image from the Bill / Invoice print screen.

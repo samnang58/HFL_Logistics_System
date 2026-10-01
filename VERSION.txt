@@ -1,0 +1,11 @@
+HFL Logistics ERP - Container Receiving & Tracking Separation Update
+Version: 2026.09.26-v3
+
+Key changes:
+- Container Number, HFL Tracking, and China Delivery Tracking are separate identifiers.
+- HFL Tracking is generated only when China warehouse physical receipt is confirmed.
+- China Delivery Tracking is preserved in china_waybill_number.
+- Container search supports Container / HFL Tracking / China Delivery Tracking / HFL Package Code / Package ID.
+- Container movement includes Received after Cambodia Warehouse.
+- Container UI explicitly labels HFL and China tracking numbers.
+- Legacy mock China tracking values are migrated out of the HFL tracking field.
