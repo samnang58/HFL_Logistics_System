@@ -2,7 +2,11 @@
 
 use Illuminate\Support\Facades\Route;
 
+
 use App\Http\Controllers\AuthController;
+use App\Http\Controllers\CustomerAuthController;
+use App\Http\Controllers\CustomerShipmentController;
+use App\Http\Controllers\CustomerWarehouseController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\CustomerController;
 use App\Http\Controllers\PackageController;
@@ -39,6 +43,26 @@ Route::prefix('v1')->group(function () {
 
     Route::post('/auth/login', [AuthController::class, 'login']);
 
+    Route::post('/customer/login', [CustomerAuthController::class, 'login']);
+    
+Route::middleware('auth:sanctum')->group(function () {
+    Route::get('/customer/me', [CustomerAuthController::class, 'me']);
+    Route::post('/customer/logout', [CustomerAuthController::class, 'logout']);
+
+    Route::get('/customer/shipments/counts', [CustomerShipmentController::class, 'counts']);
+    Route::get('/customer/shipments', [CustomerShipmentController::class, 'index']);
+    Route::get('/customer/shipments/counts', [CustomerShipmentController::class, 'counts']);
+    Route::get('/customer/shipments/{trackingNumber}', [CustomerShipmentController::class, 'show']);
+    Route::get('/customer/shipments/{trackingNumber}/tracking', [CustomerShipmentController::class, 'tracking']);
+   
+Route::get('/customer/warehouse-addresses', [
+    CustomerWarehouseController::class,
+    'index'
+]);
+
+    Route::post('/customer/scan/resolve', [CustomerShipmentController::class, 'resolveScan']);
+    Route::get('/customer/scan/recent', [CustomerShipmentController::class, 'recentScans']);
+});
     // FAKE China WayBill API for local testing (404 in production).
     Route::post('/mock-china/WayBill/QueryWayBillSpeed', [\App\Http\Controllers\MockWayBillApiController::class, 'query']);
     Route::get('/mock-china/image/{n}.svg', [\App\Http\Controllers\MockWayBillApiController::class, 'image'])->where('n', '[0-9]+');

@@ -23,6 +23,14 @@ return Application::configure(basePath: dirname(__DIR__))
             'permission' => EnsurePermission::class,
         ]);
 
+        $middleware->redirectGuestsTo(function ($request) {
+            if ($request->is('api/*')) {
+                return null;
+            }
+
+            return route('login');
+        });
+
         // HFL uses Sanctum personal access tokens (Bearer tokens).
         // Do not enable stateful cookie authentication / CSRF for the API.
     })
@@ -32,6 +40,8 @@ return Application::configure(basePath: dirname(__DIR__))
             ->withoutOverlapping();
     })
     ->withExceptions(function (Exceptions $exceptions) {
-        //
+        $exceptions->shouldRenderJsonWhen(function ($request, $input) {
+            return $request->is('api/*') || $request->expectsJson();
+        });
     })
     ->create();

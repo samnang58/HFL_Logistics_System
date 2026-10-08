@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Search, Plus, Download, Upload, Filter, RotateCcw, Eye, Pencil, MoreHorizontal, Printer, Package, Truck, CheckCircle2, Clock3, AlertTriangle, Users, UserRound, Crown, Database, Plane, Ship, Tag, Boxes, Settings, Bell, Globe2, Building2, MapPin, Mail, Phone, Wrench, Save, RefreshCw, FileSpreadsheet, XCircle, CircleDollarSign, ChevronDown } from 'lucide-react';
 import PrintPackageModal from './PrintPackageModal.jsx';
 import userApi from '../services/userApi.js';
+import WarehouseManagement from './WarehouseManagement.jsx';
 import { formatHflDateTime } from '../utils/dateTime.js';
 
 const cn=(...x)=>x.filter(Boolean).join(' ');
@@ -109,4 +110,248 @@ export function PricingList(){return <Page icon={Tag} title="HFL Pricing List" s
 const modes=[['AIR','Air Freight','✈','Air transportation for fast delivery (suitable for urgent cargo)','Active'],['SEA','Sea Freight','⚓','Sea transportation for large volume cargo (economical)','Active'],['LAND','Land Freight','🚚','Land transportation via truck (China - Cambodia)','Active'],['EXPRESS','Express Delivery','📦','Express courier service (small parcel)','Active'],['SPECIAL','Special Goods','⚠','Special cargo (battery, liquid, chemical, etc.)','Active']];
 export function ShippingMode(){return <Page icon={Truck} title="Shipping Mode" subtitle="Manage shipping modes and their configurations" actions={<Button primary icon={Plus}>Add Shipping Mode</Button>}><div className="grid grid-cols-2 xl:grid-cols-5 gap-3"><Stat icon={Truck} title="Total Shipping Modes" value="5"/><Stat icon={Plane} title="Air Freight" value="1" color="green" delta="0%"/><Stat icon={Ship} title="Sea Freight" value="1" color="blue" delta="0%"/><Stat icon={Truck} title="Land Freight" value="1" color="green" delta="0%"/><Stat icon={Package} title="Express / Small Parcel" value="2" color="purple" delta="0%"/></div><FilterBar><SearchBox placeholder="Search shipping mode name or code..."/><Select label="Status">All Status</Select></FilterBar><TableShell title="🚚  Shipping Mode List" subtitle="Showing 1 - 5 of 5 shipping modes"><div className="overflow-x-auto"><table className="w-full text-sm"><thead className="bg-slate-50 text-xs"><tr>{['',' #','Mode Code','Mode Name','Icon','Description','Status','Created At','Action'].map(h=><th key={h} className="text-left px-3 py-3">{h}</th>)}</tr></thead><tbody>{modes.map((r,i)=><tr className="border-t" key={i}><td className="px-3 py-2"><input type="checkbox"/></td><td className="px-3 py-2">{i+1}</td>{r.map((v,j)=><td key={j} className="px-3 py-2">{j===4?<Status value={v}/>:v}</td>)}<td className="px-3 py-2"><Actions/></td></tr>)}</tbody></table></div><Pagination total="1"/></TableShell><div className="bg-white border rounded-xl p-5"><div className="flex items-center justify-between"><div><h3 className="font-bold text-slate-800">Mode Details</h3><div className="flex items-center gap-3 mt-3"><div className="w-12 h-12 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center"><Plane/></div><div><b>Air Freight</b> <Status value="Active"/><p className="text-sm text-slate-400">Fast and reliable air transportation</p></div></div></div><Button icon={Pencil}>Edit</Button></div><div className="grid grid-cols-2 md:grid-cols-5 gap-2 mt-4"><div className="bg-slate-50 p-3 rounded-lg"><small>Mode Code</small><b className="block mt-1">AIR</b></div><div className="bg-slate-50 p-3 rounded-lg"><small>Default Currency</small><b className="block mt-1">USD</b></div><div className="bg-slate-50 p-3 rounded-lg"><small>Typical Transit Time</small><b className="block mt-1">3 - 7 days</b></div><div className="bg-slate-50 p-3 rounded-lg"><small>Minimum Charge</small><b className="block mt-1">$100.00</b></div><div className="bg-slate-50 p-3 rounded-lg"><small>Description</small><b className="block mt-1 text-xs">Air transportation for fast delivery</b></div></div></div></Page>}
 
-export function HFLSettings(){const [saved,setSaved]=useState(false);return <Page icon={Settings} title="HFL Settings" subtitle="Configure system settings, preferences and operational parameters"><div className="bg-white border rounded-xl overflow-hidden"><div className="flex flex-wrap gap-1 p-2 border-b">{['General','Company','Warehouse','Shipping','Pricing','Tracking','Notifications','Integrations','Security','System'].map((x,i)=><button key={x} className={cn('px-4 py-2.5 rounded-lg text-sm font-semibold',i===0?'bg-blue-50 text-blue-600':'text-slate-600')}>{x}</button>)}</div><div className="grid grid-cols-2 xl:grid-cols-4 gap-3 p-3"><Stat icon={Building2} title="Company Profile" value="HFL Logistics Co., Ltd." color="blue" delta="Configured"/><Stat icon={Building2} title="Warehouses" value="3 Warehouses" color="green" delta="Active"/><Stat icon={Truck} title="Shipping Modes" value="5 Modes" color="blue" delta="Configured"/><Stat icon={CircleDollarSign} title="Pricing Rules" value="48 Price Items" color="green" delta="Active"/></div></div><div className="grid lg:grid-cols-5 gap-4"><div className="lg:col-span-3 bg-white border rounded-xl p-4"><div className="flex items-center justify-between"><div><h3 className="font-bold">⚙️ General Information</h3><p className="text-xs text-slate-400">Basic system information and company details</p></div><Button primary icon={Save} onClick={()=>setSaved(true)}>{saved?'Saved':'Save Changes'}</Button></div><div className="grid md:grid-cols-2 gap-4 mt-5"><div><label className="text-xs">Company Name *</label><input className="mt-1 w-full h-10 border rounded-lg px-3" value="HIGH FAST LOGISTICS CO., LTD." readOnly/><label className="text-xs block mt-4">Company Code *</label><input className="mt-1 w-full h-10 border rounded-lg px-3" value="HFL" readOnly/><label className="text-xs block mt-4">Company Logo</label><div className="h-28 mt-2 rounded-lg bg-slate-50 flex items-center justify-center text-blue-600 font-bold text-xl">HFL<br/><small>HIGH FAST LOGISTICS</small></div></div><div><Select label="Default Language">English</Select><div className="mt-3"><Select label="Default Currency">USD - US Dollar</Select></div><div className="mt-3"><Select label="Time Zone">(GMT+07:00) Phnom Penh</Select></div><div className="mt-3"><Select label="Date Format">YYYY-MM-DD</Select></div><div className="mt-3"><Select label="Time Format">24-hour (HH:mm)</Select></div></div></div></div><div className="lg:col-span-2 bg-white border rounded-xl p-4"><div className="flex items-center justify-between"><div><h3 className="font-bold">⚙️ System Preferences</h3><p className="text-xs text-slate-400">Configure system behavior and default settings</p></div><Button primary>Save Changes</Button></div>{['Enable Email Notifications','Enable SMS Notifications','Auto-generate Tracking Number','Require Approval for Pricing Changes','Enable Customer Self-Registration','Enable Maintenance Mode'].map((x,i)=><div className="flex items-center justify-between py-3 border-b last:border-0" key={x}><div><b className="text-sm">{x}</b><p className="text-xs text-slate-400">{['Send email notifications for important events','Send SMS notifications for tracking updates','Automatically generate tracking numbers for new packages','Require admin approval for pricing modifications','Allow customers to register accounts','Temporarily disable system for maintenance'][i]}</p></div><div className={cn('w-10 h-6 rounded-full p-0.5',i<3?'bg-blue-600':'bg-slate-300')}><div className="w-5 h-5 bg-white rounded-full ml-auto"/></div></div>)}</div></div><div className="grid lg:grid-cols-2 gap-4"><div className="bg-white border rounded-xl p-4"><h3 className="font-bold">📞 Contact Information</h3><div className="grid grid-cols-2 gap-4 mt-4 text-sm"><p><Mail size={15} className="inline mr-2 text-blue-600"/>info@hfl.com</p><p><Globe2 size={15} className="inline mr-2 text-blue-600"/>https://www.hfl.com</p><p><Phone size={15} className="inline mr-2 text-blue-600"/>+855 12 345 678</p><p><MapPin size={15} className="inline mr-2 text-blue-600"/>Phnom Penh, Cambodia</p></div></div><div className="bg-white border rounded-xl p-4"><h3 className="font-bold">🛠 Quick Actions</h3><div className="grid grid-cols-2 gap-2 mt-4"><Button icon={RefreshCw}>Clear Cache</Button><Button icon={Database}>Backup Database</Button><Button icon={FileSpreadsheet}>View System Logs</Button><Button icon={RotateCcw}>Restore Database</Button></div></div></div></Page>}
+export function HFLSettings(){
+  const [activeTab,setActiveTab]=useState('General');
+  const [saved,setSaved]=useState(false);
+
+  const tabs=[
+    'General','Company','Warehouse','Shipping','Pricing',
+    'Tracking','Notifications','Integrations','Security','System'
+  ];
+
+  const handleSave=()=>{
+    setSaved(true);
+    setTimeout(()=>setSaved(false),2000);
+  };
+
+  return (
+    <Page
+      icon={Settings}
+      title="HFL Settings"
+      subtitle="Configure system settings, preferences and operational parameters"
+    >
+      <div className="bg-white border rounded-xl overflow-hidden">
+
+        <div className="flex flex-wrap gap-1 p-2 border-b">
+          {tabs.map((tab)=>(
+            <button
+              key={tab}
+              type="button"
+              onClick={()=>setActiveTab(tab)}
+              className={cn(
+                'px-4 py-2.5 rounded-lg text-sm font-semibold',
+                activeTab===tab
+                  ? 'bg-blue-50 text-blue-600'
+                  : 'text-slate-600 hover:bg-slate-50'
+              )}
+            >
+              {tab}
+            </button>
+          ))}
+        </div>
+
+        {activeTab==='General' && (
+          <>
+            <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 p-3">
+              <Stat icon={Building2} title="Company Profile" value="HFL Logistics Co., Ltd." color="blue" delta="Configured"/>
+              <Stat icon={Building2} title="Warehouses" value="3 Warehouses" color="green" delta="Active"/>
+              <Stat icon={Truck} title="Shipping Modes" value="5 Modes" color="blue" delta="Configured"/>
+              <Stat icon={CircleDollarSign} title="Pricing Rules" value="48 Price Items" color="green" delta="Active"/>
+            </div>
+
+            <div className="grid lg:grid-cols-5 gap-4 p-4">
+
+              <div className="lg:col-span-3 bg-white border rounded-xl p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="font-bold">⚙️ General Information</h3>
+                    <p className="text-xs text-slate-400">
+                      Basic system information and company details
+                    </p>
+                  </div>
+
+                  <Button primary icon={Save} onClick={handleSave}>
+                    {saved ? 'Saved' : 'Save Changes'}
+                  </Button>
+                </div>
+
+                <div className="grid md:grid-cols-2 gap-4 mt-5">
+                  <div>
+                    <label className="text-xs">Company Name *</label>
+                    <input
+                      className="mt-1 w-full h-10 border rounded-lg px-3"
+                      value="HIGH FAST LOGISTICS CO., LTD."
+                      readOnly
+                    />
+
+                    <label className="text-xs block mt-4">
+                      Company Code *
+                    </label>
+                    <input
+                      className="mt-1 w-full h-10 border rounded-lg px-3"
+                      value="HFL"
+                      readOnly
+                    />
+
+                    <label className="text-xs block mt-4">
+                      Company Logo
+                    </label>
+                    <div className="h-28 mt-2 rounded-lg bg-slate-50 flex items-center justify-center text-blue-600 font-bold text-xl text-center">
+                      HFL<br/>
+                      <small>HIGH FAST LOGISTICS</small>
+                    </div>
+                  </div>
+
+                  <div>
+                    <Select label="Default Language">English</Select>
+
+                    <div className="mt-3">
+                      <Select label="Default Currency">
+                        USD - US Dollar
+                      </Select>
+                    </div>
+
+                    <div className="mt-3">
+                      <Select label="Time Zone">
+                        (GMT+07:00) Phnom Penh
+                      </Select>
+                    </div>
+
+                    <div className="mt-3">
+                      <Select label="Date Format">
+                        YYYY-MM-DD
+                      </Select>
+                    </div>
+
+                    <div className="mt-3">
+                      <Select label="Time Format">
+                        24-hour (HH:mm)
+                      </Select>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="lg:col-span-2 bg-white border rounded-xl p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="font-bold">⚙️ System Preferences</h3>
+                    <p className="text-xs text-slate-400">
+                      Configure system behavior and default settings
+                    </p>
+                  </div>
+
+                  <Button primary>Save Changes</Button>
+                </div>
+
+                {[
+                  'Enable Email Notifications',
+                  'Enable SMS Notifications',
+                  'Auto-generate Tracking Number',
+                  'Require Approval for Pricing Changes',
+                  'Enable Customer Self-Registration',
+                  'Enable Maintenance Mode'
+                ].map((x,i)=>(
+                  <div
+                    className="flex items-center justify-between py-3 border-b last:border-0"
+                    key={x}
+                  >
+                    <div>
+                      <b className="text-sm">{x}</b>
+                      <p className="text-xs text-slate-400">
+                        {[
+                          'Send email notifications for important events',
+                          'Send SMS notifications for tracking updates',
+                          'Automatically generate tracking numbers for new packages',
+                          'Require admin approval for pricing modifications',
+                          'Allow customers to register accounts',
+                          'Temporarily disable system for maintenance'
+                        ][i]}
+                      </p>
+                    </div>
+
+                    <div className={cn(
+                      'w-10 h-6 rounded-full p-0.5',
+                      i<3 ? 'bg-blue-600' : 'bg-slate-300'
+                    )}>
+                      <div className="w-5 h-5 bg-white rounded-full ml-auto"/>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid lg:grid-cols-2 gap-4 p-4 pt-0">
+              <div className="bg-white border rounded-xl p-4">
+                <h3 className="font-bold">📞 Contact Information</h3>
+
+                <div className="grid grid-cols-2 gap-4 mt-4 text-sm">
+                  <p>
+                    <Mail size={15} className="inline mr-2 text-blue-600"/>
+                    info@hfl.com
+                  </p>
+
+                  <p>
+                    <Globe2 size={15} className="inline mr-2 text-blue-600"/>
+                    https://www.hfl.com
+                  </p>
+
+                  <p>
+                    <Phone size={15} className="inline mr-2 text-blue-600"/>
+                    +855 12 345 678
+                  </p>
+
+                  <p>
+                    <MapPin size={15} className="inline mr-2 text-blue-600"/>
+                    Phnom Penh, Cambodia
+                  </p>
+                </div>
+              </div>
+
+              <div className="bg-white border rounded-xl p-4">
+                <h3 className="font-bold">🛠 Quick Actions</h3>
+
+                <div className="grid grid-cols-2 gap-2 mt-4">
+                  <Button icon={RefreshCw}>Clear Cache</Button>
+                  <Button icon={Database}>Backup Database</Button>
+                  <Button icon={FileSpreadsheet}>View System Logs</Button>
+                  <Button icon={RotateCcw}>Restore Database</Button>
+                </div>
+              </div>
+            </div>
+          </>
+        )}
+
+        {activeTab==='Warehouse' && (
+          <div className="p-4">
+            <WarehouseManagement />
+          </div>
+        )}
+
+        {!['General','Warehouse'].includes(activeTab) && (
+          <div className="p-10">
+            <div className="max-w-xl mx-auto text-center">
+              <div className="w-16 h-16 mx-auto rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center">
+                <Settings size={30}/>
+              </div>
+
+              <h3 className="text-lg font-bold text-slate-800 mt-4">
+                {activeTab} Settings
+              </h3>
+
+              <p className="text-sm text-slate-400 mt-2">
+                Configuration for {activeTab.toLowerCase()} settings
+                will be available in a future version.
+              </p>
+
+              <div className="mt-5 inline-flex items-center px-4 py-2 rounded-lg bg-slate-50 text-slate-500 text-sm">
+                Coming Soon
+              </div>
+            </div>
+          </div>
+        )}
+
+      </div>
+    </Page>
+  );
+}

@@ -2,8 +2,12 @@
 
 namespace App\Models;
 
+use Laravel\Sanctum\HasApiTokens;
+
 class Customer extends BaseModel
 {
+    use HasApiTokens;
+
     protected $hidden = ['password'];
 
     public function salesOwner()
