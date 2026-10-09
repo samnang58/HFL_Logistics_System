@@ -594,6 +594,70 @@ class CustomerShipmentController extends ApiController
      * Convert backend package status
      * into Figma 5-stage tracking stage.
      */
+
+    /**
+     * Booking summary for the authenticated customer.
+     */
+    public function bookings(Request $request)
+    {
+        return $this->listingSummary($request);
+    }
+
+    /**
+     * Report summary for the authenticated customer.
+     */
+    public function reports(Request $request)
+    {
+        return $this->listingSummary($request);
+    }
+
+    /**
+     * Build the summary response expected by Flutter ListingSummary.
+     */
+    private function listingSummary(Request $request)
+    {
+        $customer = $request->user();
+
+        $query = Package::query()
+            ->where('customer_id', $customer->customer_id);
+
+        $search = trim((string) $request->query('search', ''));
+
+        if ($search !== '') {
+            $query->where(function ($q) use ($search) {
+                $q->where('tracking_number', 'like', "%{$search}%")
+                  ->orWhere('code', 'like', "%{$search}%")
+                  ->orWhere('product_name', 'like', "%{$search}%");
+            });
+        }
+
+        $all = (clone $query)->count();
+
+        $inTransit = (clone $query)
+            ->whereIn('status', ['In Transit', 'in_transit'])
+            ->count();
+
+        $arrived = (clone $query)
+            ->whereIn('status', [
+                'Cambodia Warehouse',
+                'Arrived Cambodia',
+                'Arrived KH',
+                'arrived_kh',
+            ])
+            ->count();
+
+        return $this->ok([
+            'all' => $all,
+            'in_transit' => $inTransit,
+            'arrived' => $arrived,
+            'total' => $all,
+            'from' => $all > 0 ? 1 : 0,
+            'to' => $all,
+            'current_page' => 1,
+            'last_page' => 1,
+        ]);
+    }
+
     private function calculateTrackingStage(
         ?string $status
     ): int {

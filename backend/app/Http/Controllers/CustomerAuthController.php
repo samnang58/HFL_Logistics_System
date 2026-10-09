@@ -15,7 +15,9 @@ class CustomerAuthController extends ApiController
             'password' => 'required|string',
         ]);
 
-        $customer = Customer::where('username', $data['username'])->first();
+        $customer = Customer::where('username', $data['username'])
+            ->orWhere('customer_id', $data['username'])
+            ->first();
 
         if (!$customer || empty($customer->password)) {
             return $this->fail('Invalid credentials', [], 401);
@@ -36,6 +38,24 @@ class CustomerAuthController extends ApiController
     public function me(Request $request)
     {
         return $this->ok($request->user());
+    }
+
+    public function uploadAvatar(Request $request)
+    {
+        $data = $request->validate([
+            'avatar' => 'required|image|mimes:jpeg,jpg,png,webp|max:5120',
+        ]);
+
+        $customer = $request->user();
+        $path = $request->file('avatar')->store('customer-avatars', 'public');
+
+        $customer->avatar_url = \Illuminate\Support\Facades\Storage::disk('public')->url($path);
+        $customer->save();
+
+        return $this->ok([
+            'avatar_url' => $customer->avatar_url,
+            'customer' => $customer->fresh(),
+        ], 'Profile photo updated successfully');
     }
 
     public function logout(Request $request)

@@ -47,9 +47,12 @@ Route::prefix('v1')->group(function () {
     
 Route::middleware('auth:sanctum')->group(function () {
     Route::get('/customer/me', [CustomerAuthController::class, 'me']);
+    Route::post('/customer/profile/avatar', [CustomerAuthController::class, 'uploadAvatar']);
     Route::post('/customer/logout', [CustomerAuthController::class, 'logout']);
 
     Route::get('/customer/shipments/counts', [CustomerShipmentController::class, 'counts']);
+    Route::get('/customer/bookings', [CustomerShipmentController::class, 'bookings']);
+    Route::get('/customer/reports', [CustomerShipmentController::class, 'reports']);
     Route::get('/customer/shipments', [CustomerShipmentController::class, 'index']);
     Route::get('/customer/shipments/counts', [CustomerShipmentController::class, 'counts']);
     Route::get('/customer/shipments/{trackingNumber}', [CustomerShipmentController::class, 'show']);
