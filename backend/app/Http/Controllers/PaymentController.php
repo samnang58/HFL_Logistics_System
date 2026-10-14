@@ -64,17 +64,35 @@ class PaymentController extends CrudController {
 
             $items=is_array($inv->items)?$inv->items:[];
             $packageIds=collect($items)->pluck('package_id')->filter()->unique()->values();
+            $eligibleStatuses=['Invoiced','Partially Paid'];
+
             foreach($packageIds as $packageId){
                 $pkg=Package::find($packageId);
-                if(!$pkg || in_array((string)$pkg->status,['Delivered','Cancelled','Returned'],true)) continue;
-                $nextStatus=$inv->outstanding==0?'Ready for Delivery':'Partially Paid';
+
+                if(!$pkg || !in_array((string)$pkg->status,$eligibleStatuses,true)) {
+                    continue;
+                }
+
+                $fullyPaid=(float)$inv->outstanding <= 0.0001;
+                $nextStatus=$fullyPaid?'Ready for Delivery':'Partially Paid';
+
+                if((string)$pkg->status === $nextStatus) {
+                    continue;
+                }
+
                 $pkg->status=$nextStatus;
                 $pkg->save();
+
                 TrackingEvent::create([
-                    'tracking_number'=>$pkg->tracking_number,'package_id'=>$pkg->id,'status'=>$nextStatus,
+                    'tracking_number'=>$pkg->tracking_number,
+                    'package_id'=>$pkg->id,
+                    'status'=>$nextStatus,
                     'location'=>$pkg->warehouse_location ?: $pkg->to_warehouse ?: 'Cambodia',
-                    'warehouse'=>'Cambodia Warehouse','staff_name'=>auth()->user()?->name ?? 'Finance',
-                    'note'=>$inv->outstanding==0?'Invoice fully paid; package ready for delivery':'Partial payment received',
+                    'warehouse'=>'Cambodia Warehouse',
+                    'staff_name'=>auth()->user()?->name ?? 'Finance',
+                    'note'=>$fullyPaid
+                        ? 'Invoice fully paid; package ready for delivery'
+                        : 'Partial payment received',
                     'event_at'=>now()
                 ]);
             }

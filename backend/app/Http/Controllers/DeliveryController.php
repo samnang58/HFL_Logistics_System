@@ -15,6 +15,7 @@ class DeliveryController extends CrudController
 
     protected array $rules = [
         'package_id' => 'required|integer|exists:packages,id',
+        'hfl_package_code' => 'nullable|string|max:100',
         'customer_id' => 'nullable|string|max:100',
         'driver_id' => 'nullable|integer|exists:users,id',
         'delivery_address' => 'required|string|max:1000',
@@ -52,7 +53,32 @@ class DeliveryController extends CrudController
 
     public function store(Request $r)
     {
+        if ($r->filled('hfl_package_code')) {
+            $code = trim((string) $r->input('hfl_package_code'));
+            $p = Package::where('hfl_package_code', $code)->first();
+
+            if (!$p) {
+                return $this->fail(
+                    'Package not found for HFL Warehouse Code.',
+                    ['hfl_package_code' => $code],
+                    422
+                );
+            }
+
+            if ($r->filled('package_id') &&
+                (int) $r->input('package_id') !== (int) $p->id) {
+                return $this->fail(
+                    'HFL Warehouse Code does not match package_id.',
+                    [],
+                    422
+                );
+            }
+
+            $r->merge(['package_id' => $p->id]);
+        }
+
         $d = $r->validate($this->rules);
+        unset($d['hfl_package_code']);
         return DB::transaction(function () use ($d) {
             $p = Package::findOrFail($d['package_id']);
 

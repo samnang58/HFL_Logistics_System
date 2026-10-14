@@ -1407,47 +1407,33 @@ class InvoiceController extends CrudController
              * ---------------------------------------------------------
              */
 
-            if (!in_array(
-                (string) $package->status,
-                [
-                    'Delivered',
-                    'Cancelled',
-                    'Returned',
-                ],
-                true
-            )) {
+            // Only a priced, non-draft invoice may move an eligible
+            // package into the Invoiced stage.
+            $invoiceCanSetInvoicedStatus =
+                !$isBillingDraft
+                && in_array(
+                    (string) $package->status,
+                    [
+                        'Measurement Completed',
+                        'Ready for Billing',
+                        'Cambodia Warehouse',
+                    ],
+                    true
+                );
 
-                $package->status =
-                    'Invoiced';
-
+            if ($invoiceCanSetInvoicedStatus) {
+                $package->status = 'Invoiced';
                 $package->save();
 
                 TrackingEvent::create([
-                    'tracking_number' =>
-                        $package->tracking_number,
-
-                    'package_id' =>
-                        $package->id,
-
-                    'status' =>
-                        'Invoiced',
-
-                    'location' =>
-                        $package->warehouse_location
-                        ?: 'Cambodia Warehouse',
-
-                    'warehouse' =>
-                        'Cambodia Warehouse',
-
-                    'staff_name' =>
-                        auth()->user()?->name
-                        ?? 'Billing',
-
-                    'note' =>
-                        'Invoice created from package',
-
-                    'event_at' =>
-                        now(),
+                    'tracking_number' => $package->tracking_number,
+                    'package_id' => $package->id,
+                    'status' => 'Invoiced',
+                    'location' => $package->warehouse_location ?: 'Cambodia Warehouse',
+                    'warehouse' => 'Cambodia Warehouse',
+                    'staff_name' => auth()->user()?->name ?? 'Billing',
+                    'note' => 'Billing rate confirmed and invoice issued',
+                    'event_at' => now(),
                 ]);
             }
 
