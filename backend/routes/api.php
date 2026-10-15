@@ -32,6 +32,7 @@ use App\Http\Controllers\FinanceController;
 use App\Http\Controllers\BillingSettingsController;
 use App\Http\Controllers\MockChinaApiController;
 use App\Http\Controllers\NotificationController;
+use App\Http\Controllers\TestDataController;
 
 Route::prefix('v1')->group(function () {
 
@@ -244,6 +245,12 @@ Route::get('/customer/warehouse-addresses', [
             '/tracking/events',
             [TrackingController::class, 'store']
         );
+
+        Route::get('/test-data', [TestDataController::class, 'index'])
+            ->middleware('permission:test-data.manage');
+
+        Route::post('/test-data/invoices/{id}/mark', [TestDataController::class, 'markInvoice'])
+            ->middleware('permission:test-data.manage');
 
         /*
         |--------------------------------------------------------------------------
