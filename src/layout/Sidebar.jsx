@@ -2,9 +2,16 @@ import React, { useState, useEffect } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import { ChevronDown, ArrowRight } from "lucide-react";
 import { NAV_SECTIONS } from "../data/navigation.js";
+import { useAuth } from "../auth/AuthContext.jsx";
 
 export default function Sidebar({ mobileOpen, setMobileOpen }) {
   const location = useLocation();
+  const { user } = useAuth();
+  const permissions = Array.isArray(user?.permissions) ? user.permissions : [];
+  const role = String(user?.role || "").trim().toLowerCase();
+  const canManageTestData = permissions.length > 0
+    ? permissions.includes("*") || permissions.includes("test-data.manage")
+    : ["super admin", "admin", "finance", "accounting"].includes(role);
   const [openKey, setOpenKey] = useState(null);
 
   // Auto-expand the section that matches the current route.
@@ -67,7 +74,7 @@ export default function Sidebar({ mobileOpen, setMobileOpen }) {
         {/* Navigation */}
         <nav className="flex-1 overflow-y-auto py-3 px-3">
 
-          {NAV_SECTIONS.map((section, si) => (
+          {NAV_SECTIONS.filter(section => section.items.some(item => item.key !== "test-data" || canManageTestData)).map((section, si) => (
 
             <div
               key={si}
@@ -80,7 +87,7 @@ export default function Sidebar({ mobileOpen, setMobileOpen }) {
                 </p>
               )}
 
-              {section.items.map((item) => {
+              {section.items.filter(item => item.key !== "test-data" || canManageTestData).map((item) => {
 
                 const Icon = item.icon;
 

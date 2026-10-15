@@ -46,6 +46,10 @@ class CustomerController extends CrudController
     public function index(Request $request)
     {
         $query = Customer::query()
+            ->where(function ($q) {
+                $q->whereNull('customer_id')
+                  ->orWhere('customer_id', 'not like', 'HFLTEST%');
+            })
             ->with([
                 'salesOwner:id,name,email,role',
                 'createdBy:id,name,email,role'
@@ -67,7 +71,10 @@ class CustomerController extends CrudController
 
     public function show360($id)
     {
-        $customer = Customer::with('salesOwner:id,name,email,role')->findOrFail($id);
+        $customer = Customer::where(function ($q) {
+                $q->whereNull('customer_id')
+                  ->orWhere('customer_id', 'not like', 'HFLTEST%');
+            })->with('salesOwner:id,name,email,role')->findOrFail($id);
 
         $packages = \App\Models\Package::where('customer_id', $customer->customer_id)
             ->with('containers')
@@ -82,8 +89,10 @@ class CustomerController extends CrudController
         $packageIds = $packages->pluck('id');
         $tracking = $packageIds->isEmpty() ? collect() : \App\Models\TrackingEvent::whereIn('package_id', $packageIds)->orderByDesc('event_at')->get();
 
-        $invoices = \App\Models\Invoice::where('customer_id', $customer->customer_id)->orderByDesc('created_at')->get();
-        $payments = \App\Models\Payment::where('customer_id', $customer->customer_id)->orderByDesc('paid_at')->get();
+        $invoices = \App\Models\Invoice::where('customer_id', $customer->customer_id)
+            ->where('is_test', false)->orderByDesc('created_at')->get();
+        $payments = \App\Models\Payment::where('customer_id', $customer->customer_id)
+            ->where('is_test', false)->orderByDesc('paid_at')->get();
 
         $invoiced = (float) $invoices->sum('grand_total');
         $paid = (float) $payments->where('status', 'Confirmed')->sum('amount');
@@ -111,7 +120,10 @@ class CustomerController extends CrudController
 
     public function show($id)
     {
-        $customer = Customer::with([
+        $customer = Customer::where(function ($q) {
+                $q->whereNull('customer_id')
+                  ->orWhere('customer_id', 'not like', 'HFLTEST%');
+            })->with([
             'salesOwner:id,name,email,role'
         ])->findOrFail($id);
 
@@ -194,7 +206,10 @@ class CustomerController extends CrudController
 
     public function update(Request $request, $id)
     {
-        $customer = Customer::findOrFail($id);
+        $customer = Customer::where(function ($q) {
+                $q->whereNull('customer_id')
+                  ->orWhere('customer_id', 'not like', 'HFLTEST%');
+            })->findOrFail($id);
 
         $rules = $this->rules;
         $rules['username'][] = Rule::unique('customers', 'username')->ignore($customer->id);

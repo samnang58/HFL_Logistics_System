@@ -23,11 +23,32 @@ class PaymentController extends CrudController {
     ];
     protected function searchColumns():array{return ['payment_no','invoice_id','customer_id','reference','status'];}
 
+    public function index(Request $r)
+    {
+        $q = Payment::query()->where('is_test', false);
+
+        if ($r->filled('search')) {
+            $s = $r->string('search');
+            $q->where(function ($x) use ($s) {
+                foreach ($this->searchColumns() as $c) {
+                    $x->orWhere($c, 'like', '%' . $s . '%');
+                }
+            });
+        }
+
+        return $this->ok($q->latest()->paginate((int) $r->input('per_page', 25)));
+    }
+
+    public function show($id)
+    {
+        return $this->ok(Payment::where('is_test', false)->findOrFail($id));
+    }
+
     public function store(Request $r){
         $d=$r->validate($this->rules);
         return DB::transaction(function()use($d){
-            if($existing=Payment::where('idempotency_key',$d['idempotency_key'])->first()) return $this->ok($existing,'Payment already processed');
-            $inv=Invoice::lockForUpdate()->findOrFail($d['invoice_id']);
+            if($existing=Payment::where('is_test', false)->where('idempotency_key',$d['idempotency_key'])->first()) return $this->ok($existing,'Payment already processed');
+            $inv=Invoice::where('is_test', false)->lockForUpdate()->findOrFail($d['invoice_id']);
             if (in_array((string) $inv->status, ['Cancelled', 'Void'], true)) {
                 return $this->fail('Payment cannot be recorded against a cancelled or void invoice.', [], 422);
             }

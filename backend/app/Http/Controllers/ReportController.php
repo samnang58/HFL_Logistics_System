@@ -24,8 +24,8 @@ class ReportController extends ApiController {
  public function customerFinance(Request $r){
   $only = $r->filled('customer_id') ? (string)$r->input('customer_id') : null;
 
-  $invoices = $this->range(Invoice::query()->whereNotIn('status',['Cancelled','Void','Draft']),'created_at',$r);
-  $payments = $this->range(Payment::query()->where('status','Confirmed'),'paid_at',$r);
+  $invoices = $this->range(Invoice::query()->where('is_test', false)->whereNotIn('status',['Cancelled','Void','Draft']),'created_at',$r);
+  $payments = $this->range(Payment::query()->where('is_test', false)->where('status','Confirmed'),'paid_at',$r);
   $expenses = $this->range(Expense::query()->where('status','!=','Cancelled')->where(function($q){$q->whereNotNull('package_id')->orWhereNotNull('delivery_id');}),'expense_date',$r);
   if($only){ $invoices->where('customer_id',$only); $payments->where('customer_id',$only); }
 
@@ -37,7 +37,7 @@ class ReportController extends ApiController {
   $packageCustomer = Package::whereIn('id',$expenses->pluck('package_id')->filter()->unique())->pluck('customer_id','id');
   $deliveries = Delivery::whereIn('id',$expenses->pluck('delivery_id')->filter()->unique())->get(['id','delivery_number','customer_id','package_id'])->keyBy('id');
   $deliveryPackageCustomer = Package::whereIn('id',$deliveries->pluck('package_id')->filter()->unique())->pluck('customer_id','id');
-  $invoiceNo = Invoice::whereIn('id',$payments->pluck('invoice_id')->filter()->unique())->pluck('invoice_no','id');
+  $invoiceNo = Invoice::where('is_test', false)->whereIn('id',$payments->pluck('invoice_id')->filter()->unique())->pluck('invoice_no','id');
 
   $costLines=[]; $unassigned=0.0;
   foreach($expenses as $e){
@@ -87,21 +87,21 @@ class ReportController extends ApiController {
   return $this->ok($q->select('status',DB::raw('count(*) as total'))->groupBy('status')->orderBy('status')->get());
  }
  public function sales(Request $r){
-  $q=$this->range(Invoice::query(),'created_at',$r);
+  $q=$this->range(Invoice::query()->where('is_test', false),'created_at',$r);
   return $this->ok($q->select('status',DB::raw('count(*) as total'),DB::raw('coalesce(sum(grand_total),0) as amount'),DB::raw('coalesce(sum(paid_amount),0) as paid'),DB::raw('coalesce(sum(outstanding),0) as outstanding'))->groupBy('status')->orderBy('status')->get());
  }
  public function finance(Request $r){
-  $incomeQ=$this->range(Income::query(),'received_at',$r);
+  $incomeQ=$this->range(Income::query()->where('is_test', false),'received_at',$r);
   $expenseQ=$this->range(Expense::query(),'expense_date',$r);
-  $paymentQ=$this->range(Payment::query(),'paid_at',$r);
-  $invoiceQ=$this->range(Invoice::query(),'created_at',$r);
+  $paymentQ=$this->range(Payment::query()->where('is_test', false),'paid_at',$r);
+  $invoiceQ=$this->range(Invoice::query()->where('is_test', false),'created_at',$r);
   $income=(float)(clone $incomeQ)->sum('amount'); $expense=(float)(clone $expenseQ)->where('status','Paid')->sum('amount');
   return $this->ok([
    'income'=>$income,'expense'=>$expense,'net_profit'=>$income-$expense,
    'cash_collected'=>(float)$paymentQ->where('status','Confirmed')->sum('amount'),
    'receivable'=>(float)$invoiceQ->sum('outstanding'),
    'payable'=>(float)$this->range(Expense::query(),'expense_date',$r)->where('status','Pending')->sum('amount'),
-   'income_by_category'=>$this->range(Income::query(),'received_at',$r)->select('category',DB::raw('sum(amount) as amount'))->groupBy('category')->orderByDesc('amount')->get(),
+   'income_by_category'=>$this->range(Income::query()->where('is_test', false),'received_at',$r)->select('category',DB::raw('sum(amount) as amount'))->groupBy('category')->orderByDesc('amount')->get(),
    'expense_by_category'=>$this->range(Expense::query(),'expense_date',$r)->where('status','Paid')->select('category',DB::raw('sum(amount) as amount'))->groupBy('category')->orderByDesc('amount')->get(),
   ]);
  }

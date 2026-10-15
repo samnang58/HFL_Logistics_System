@@ -39,11 +39,50 @@ class InvoiceController extends CrudController
         ];
     }
 
+    public function index(Request $r)
+    {
+        $q = Invoice::query()->where('is_test', false);
+
+        if ($r->filled('search')) {
+            $s = $r->string('search');
+            $q->where(function ($x) use ($s) {
+                foreach ($this->searchColumns() as $c) {
+                    $x->orWhere($c, 'like', '%' . $s . '%');
+                }
+            });
+        }
+
+        return $this->ok($q->latest()->paginate((int) $r->input('per_page', 25)));
+    }
+
+    public function update(Request $request, $id)
+    {
+        $invoice = Invoice::where('is_test', false)->findOrFail($id);
+        $rules = $this->rules;
+
+        foreach ($rules as $key => $rule) {
+            $rules[$key] = str_replace('required|', '', $rule);
+        }
+
+        $invoice->update($request->validate($rules));
+
+        return $this->ok($invoice, 'Updated');
+    }
+
+    public function destroy($id)
+    {
+        $invoice = Invoice::where('is_test', false)->findOrFail($id);
+        $invoice->delete();
+
+        return $this->ok(null, 'Deleted');
+    }
+
     public function show($id)
     {
-        $invoice = Invoice::findOrFail($id);
+        $invoice = Invoice::where('is_test', false)->findOrFail($id);
 
-        $payments = Payment::where('invoice_id', $invoice->id)
+        $payments = Payment::where('is_test', false)
+            ->where('invoice_id', $invoice->id)
             ->orderByDesc('paid_at')
             ->get();
 
@@ -75,7 +114,7 @@ class InvoiceController extends CrudController
         ]);
 
         return DB::transaction(function () use ($data, $id) {
-            $invoice = Invoice::lockForUpdate()->findOrFail($id);
+            $invoice = Invoice::where('is_test', false)->lockForUpdate()->findOrFail($id);
 
             if (in_array((string) $invoice->status, ['Cancelled', 'Void'], true)) {
                 return $this->fail('Cancelled or void invoices cannot be edited.', [], 422);
@@ -257,7 +296,10 @@ class InvoiceController extends CrudController
             return $this->ok(
                 $invoice->fresh()->setAttribute(
                     'payments',
-                    Payment::where('invoice_id', $invoice->id)->orderByDesc('paid_at')->get()
+                    Payment::where('is_test', false)
+                        ->where('invoice_id', $invoice->id)
+                        ->orderByDesc('paid_at')
+                        ->get()
                 ),
                 'Billing updated'
             );
@@ -432,6 +474,7 @@ class InvoiceController extends CrudController
              */
 
             $existingInvoice = Invoice::query()
+                ->where('is_test', false)
                 ->get()
                 ->first(function ($invoice) use ($package) {
 
@@ -493,7 +536,8 @@ class InvoiceController extends CrudController
 
                 $existingInvoice->setAttribute(
                     'payments',
-                    Payment::where(
+                    Payment::where('is_test', false)
+                    ->where(
                         'invoice_id',
                         $existingInvoice->id
                     )
@@ -1525,7 +1569,8 @@ class InvoiceController extends CrudController
                     );
                 }
 
-                $invoice = Invoice::findOrFail($body['data']['id']);
+                $invoice = Invoice::where('is_test', false)
+                    ->findOrFail($body['data']['id']);
 
                 if ((string) $invoice->status === 'Draft') {
                     DB::rollBack();

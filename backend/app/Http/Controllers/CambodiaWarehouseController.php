@@ -201,4 +201,72 @@ class CambodiaWarehouseController extends Controller
             ]);
         });
     }
+
+
+    /**
+     * Confirm that a customer physically picked up one package from Cambodia Warehouse.
+     * This is separate from last-mile delivery and never changes container status.
+     */
+    public function confirmCustomerPickup(Request $request, $id)
+    {
+        $data = $request->validate([
+            'received_by' => 'required|string|max:255',
+            'received_phone' => 'nullable|string|max:50',
+            'received_relation' => 'nullable|string|max:100',
+            'delivery_remark' => 'nullable|string|max:2000',
+        ]);
+
+        return DB::transaction(function () use ($id, $data) {
+            $package = Package::whereKey($id)->lockForUpdate()->firstOrFail();
+
+            $allowedStatuses = [
+                'Cambodia Warehouse',
+                'Measurement Completed',
+                'Ready for Billing',
+            ];
+
+            if (!in_array($package->status, $allowedStatuses, true)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Customer pickup is only allowed for packages currently in the Cambodia warehouse workflow.',
+                    'data' => ['package_status' => $package->status],
+                ], 422);
+            }
+
+            if ($package->delivery_status === 'Customer Received'
+                || !empty($package->customer_received_at)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Customer receipt has already been recorded for this package.',
+                ], 422);
+            }
+
+            $package->delivery_status = 'Customer Received';
+            $package->customer_received_at = now();
+            $package->received_by = $data['received_by'];
+            $package->received_phone = $data['received_phone'] ?? null;
+            $package->received_relation = $data['received_relation'] ?? null;
+            $package->delivery_remark = $data['delivery_remark'] ?? null;
+            $package->save();
+
+            TrackingEvent::create([
+                'tracking_number' => $package->tracking_number,
+                'package_id' => $package->id,
+                'status' => 'Customer Received',
+                'location' => $package->warehouse_location ?: 'Cambodia Warehouse',
+                'warehouse' => 'Cambodia Warehouse',
+                'staff_name' => auth()->user()?->name ?? 'Cambodia Warehouse',
+                'note' => 'Customer pickup confirmed. Received by: ' . $data['received_by']
+                    . (!empty($data['delivery_remark']) ? '. Remark: ' . $data['delivery_remark'] : ''),
+                'event_at' => now(),
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Customer pickup confirmed for this package.',
+                'data' => $package->fresh(),
+            ]);
+        });
+    }
+
 }

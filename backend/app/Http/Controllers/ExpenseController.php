@@ -76,7 +76,7 @@ class ExpenseController extends CrudController
             ];
         })->sortByDesc('amount')->values();
 
-        $invoiceQuery = Invoice::query()->whereNotIn('status', ['Cancelled', 'Draft', 'Void']);
+        $invoiceQuery = Invoice::query()->where('is_test', false)->whereNotIn('status', ['Cancelled', 'Draft', 'Void']);
         if ($from) {
             $invoiceQuery->whereDate('created_at', '>=', $from);
         }

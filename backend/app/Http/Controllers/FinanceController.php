@@ -14,15 +14,15 @@ class FinanceController extends ApiController
     {
         $from = $request->input('from');
         $to = $request->input('to');
-        $incomeQuery = Income::query();
+        $incomeQuery = Income::query()->where('is_test', false);
         $expenseQuery = Expense::query();
-        $paymentQuery = Payment::query();
+        $paymentQuery = Payment::query()->where('is_test', false);
         if ($from) { $incomeQuery->whereDate('received_at', '>=', $from); $expenseQuery->whereDate('expense_date', '>=', $from); $paymentQuery->whereDate('paid_at', '>=', $from); }
         if ($to) { $incomeQuery->whereDate('received_at', '<=', $to); $expenseQuery->whereDate('expense_date', '<=', $to); $paymentQuery->whereDate('paid_at', '<=', $to); }
         $income = (float)$incomeQuery->sum('amount');
         $expense = (float)(clone $expenseQuery)->where('status','Paid')->sum('amount');
-        $paidToday = (float)Payment::whereDate('paid_at', now()->toDateString())->where('status','Confirmed')->sum('amount');
-        $outstanding = (float)Invoice::sum('outstanding');
+        $paidToday = (float)Payment::where('is_test', false)->whereDate('paid_at', now()->toDateString())->where('status','Confirmed')->sum('amount');
+        $outstanding = (float)Invoice::where('is_test', false)->sum('outstanding');
         return $this->ok([
             'total_income'=>$income,
             'total_expenses'=>$expense,
@@ -31,19 +31,19 @@ class FinanceController extends ApiController
             'total_paid'=>(float)$paymentQuery->where('status','Confirmed')->sum('amount'),
             'paid_today'=>$paidToday,
             'outstanding'=>$outstanding,
-            'invoice_count'=>Invoice::count(),
-            'payment_count'=>Payment::count(),
+            'invoice_count'=>Invoice::where('is_test', false)->count(),
+            'payment_count'=>Payment::where('is_test', false)->count(),
             'expense_count'=>(clone $expenseQuery)->count(),
-            'recent_payments'=>Payment::latest('paid_at')->limit(10)->get(),
+            'recent_payments'=>Payment::where('is_test', false)->latest('paid_at')->limit(10)->get(),
             'recent_expenses'=>Expense::latest('expense_date')->limit(10)->get(),
         ]);
     }
 
     public function statement(Request $request, string $customerId)
     {
-        $invoices = Invoice::where('customer_id',$customerId)->orderByDesc('created_at')->get();
-        $payments = Payment::where('customer_id',$customerId)->orderByDesc('paid_at')->get();
-        $income = Income::where('customer_id',$customerId)->orderByDesc('received_at')->get();
+        $invoices = Invoice::where('is_test', false)->where('customer_id',$customerId)->orderByDesc('created_at')->get();
+        $payments = Payment::where('is_test', false)->where('customer_id',$customerId)->orderByDesc('paid_at')->get();
+        $income = Income::where('is_test', false)->where('customer_id',$customerId)->orderByDesc('received_at')->get();
         $invoiced = (float)$invoices->sum('grand_total');
         $paid = (float)$payments->where('status','Confirmed')->sum('amount');
         return $this->ok([
@@ -61,8 +61,8 @@ class FinanceController extends ApiController
 
     public function receipt(int $paymentId)
     {
-        $payment = Payment::findOrFail($paymentId);
-        $invoice = $payment->invoice_id ? Invoice::find($payment->invoice_id) : null;
+        $payment = Payment::where('is_test', false)->findOrFail($paymentId);
+        $invoice = $payment->invoice_id ? Invoice::where('is_test', false)->find($payment->invoice_id) : null;
         return $this->ok(['payment'=>$payment,'invoice'=>$invoice]);
     }
 }

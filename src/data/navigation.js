@@ -2,7 +2,7 @@ import {
   LayoutDashboard, Package, Search, Container as ContainerIcon, Truck,
   Warehouse, UserRound, Receipt, CreditCard, FileText, WalletCards,
   BarChart3, Tags, UsersRound, ShieldCheck, Settings, RefreshCw,
-  ScanLine, CircleDollarSign, ArrowDownToLine, ClipboardList,
+  ScanLine, CircleDollarSign, ArrowDownToLine, ClipboardList, Database,
 } from "lucide-react";
 
 export const NAV_SECTIONS = [
@@ -51,6 +51,7 @@ export const NAV_SECTIONS = [
       { key: "users", label: "Users", icon: UsersRound, path: "/app-user" },
       { key: "roles", label: "Roles & Permissions", icon: ShieldCheck, path: "/app-user" },
       { key: "settings", label: "Settings", icon: Settings, path: "/hfl-settings" },
+      { key: "test-data", label: "Test Data Management", icon: Database, path: "/test-data" },
     ],
   },
 ];

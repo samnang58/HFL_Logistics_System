@@ -186,6 +186,7 @@ Route::get('/customer/warehouse-addresses', [
         Route::post('/cambodia-warehouse/packages/{id}/receive', [CambodiaWarehouseController::class, 'receive']);
         Route::post('/cambodia-warehouse/packages/{id}/measure', [CambodiaWarehouseController::class, 'measure']);
         Route::post('/cambodia-warehouse/packages/{id}/ready-for-billing', [CambodiaWarehouseController::class, 'readyForBilling']);
+        Route::post('/cambodia-warehouse/packages/{id}/customer-pickup', [CambodiaWarehouseController::class, 'confirmCustomerPickup']);
 
         /*
         |--------------------------------------------------------------------------
@@ -249,8 +250,6 @@ Route::get('/customer/warehouse-addresses', [
         Route::get('/test-data', [TestDataController::class, 'index'])
             ->middleware('permission:test-data.manage');
 
-        Route::post('/test-data/invoices/{id}/mark', [TestDataController::class, 'markInvoice'])
-            ->middleware('permission:test-data.manage');
 
         /*
         |--------------------------------------------------------------------------

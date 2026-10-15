@@ -34,10 +34,10 @@ class DashboardController extends ApiController
         $totalCbm = (float) (clone $packageQuery)->sum('total_cbm');
         $totalWeight = (float) (clone $packageQuery)->sum('total_weight');
 
-        $income = (float) Income::sum('amount');
+        $income = (float) Income::where('is_test', false)->sum('amount');
         // Only expenses that were really paid reduce profit (same rule as Finance Control Center).
         $expense = (float) Expense::where('status', 'Paid')->sum('amount');
-        $outstanding = (float) Invoice::sum('outstanding');
+        $outstanding = (float) Invoice::where('is_test', false)->sum('outstanding');
 
         $recentActivities = TrackingEvent::query()
             ->orderByDesc('event_at')

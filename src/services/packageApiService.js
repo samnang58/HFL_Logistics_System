@@ -124,6 +124,19 @@ function toApi(input) {
   };
 }
 
+export async function confirmCustomerPickup(id, input) {
+  const payload = unwrap(await apiClient.post(
+    `/cambodia-warehouse/packages/${encodeURIComponent(id)}/customer-pickup`,
+    {
+      received_by: input.receivedBy,
+      received_phone: input.receivedPhone || null,
+      received_relation: input.receivedRelation || null,
+      delivery_remark: input.deliveryRemark || null,
+    }
+  ));
+  return normalizePackage(payload);
+}
+
 export function normalizePackage(p = {}) {
   const boxes = Array.isArray(p.boxes) ? p.boxes : [];
   const totalCbm = Number(p.total_cbm ?? p.totalCbm ?? 0);

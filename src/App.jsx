@@ -50,6 +50,7 @@ import FinanceControlCenter from "./pages/FinanceControlCenter.jsx";
 import ReportsControlCenter from "./pages/ReportsControlCenter.jsx";
 import InvoicePrintView from "./pages/InvoicePrintView.jsx";
 import InvoiceBillDetail from "./pages/InvoiceBillDetail.jsx";
+import TestDataManagement from "./pages/TestDataManagement.jsx";
 
 import {
   AuthProvider,
@@ -98,6 +99,7 @@ const BUILT_ROUTES = {
   "/reports": ReportsControlCenter,
 
   "/hfl-settings": HFLSettings,
+  "/test-data": TestDataManagement,
 
   "/crm/quotations": () => (
     <BillingManagement view="quotation" />
