@@ -621,7 +621,7 @@ class InvoiceController extends CrudController
                 // becomes Unpaid and the package moves to Invoiced.
             }
 
-            if ((string) $package->status !== 'Ready for Billing') {
+            if (!in_array($effectiveBillingStatus, ['Cambodia Warehouse', 'Measurement Completed', 'Ready for Billing'], true)) {
                 return $this->fail(
                     'Package cannot be billed from its current status: ' . ($package->status ?: 'Unknown') . '.',
                     [

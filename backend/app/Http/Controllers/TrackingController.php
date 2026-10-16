@@ -196,10 +196,10 @@ class TrackingController extends ApiController
 
         $trackingNumber = $package->tracking_number ?? $tracking;
 
-        $packageEvents = TrackingEvent::where(
-            'tracking_number',
-            $trackingNumber
-        )
+        $packageEvents = TrackingEvent::where(function ($query) use ($trackingNumber, $package) {
+            $query->where('tracking_number', $trackingNumber)
+                ->orWhere('package_id', $package->id);
+        })
         ->orderBy('event_at')
         ->orderBy('id')
         ->get();
@@ -256,25 +256,21 @@ class TrackingController extends ApiController
         })->flip();
 
         $postContainerPackageEvents = $packageEvents->filter(function ($event) use ($containerEvents, $transportStatuses) {
-            if (in_array((string) $event->status, $transportStatuses, true)) {
-                return false;
+            if ($containerEvents->isEmpty() || !$containerEvents->last()->event_date || !$event->event_at) {
+                return true;
             }
 
-            if (!$containerEvents->isEmpty() && $event->event_at && $containerEvents->last()->event_date) {
-                // TrackingEvent::event_at is cast to Carbon, but keep this
-                // defensive parse so legacy rows can never trigger a server
-                // error when Tracking is opened.
-                $packageEventAt = $event->event_at instanceof \Carbon\CarbonInterface
-                    ? $event->event_at
-                    : \Carbon\Carbon::parse($event->event_at);
-                $containerEventAt = $containerEvents->last()->event_date instanceof \Carbon\CarbonInterface
-                    ? $containerEvents->last()->event_date
-                    : \Carbon\Carbon::parse($containerEvents->last()->event_date);
+            $packageEventAt = $event->event_at instanceof \Carbon\CarbonInterface
+                ? $event->event_at
+                : \Carbon\Carbon::parse($event->event_at);
+            $containerEventAt = $containerEvents->last()->event_date instanceof \Carbon\CarbonInterface
+                ? $containerEvents->last()->event_date
+                : \Carbon\Carbon::parse($containerEvents->last()->event_date);
 
-                return $packageEventAt->gt($containerEventAt);
-            }
-
-            return true;
+            // Package movement appears in the timeline only if newer than
+            // the latest container movement. Other package events follow
+            // the same chronological rule.
+            return $packageEventAt->gt($containerEventAt);
         });
 
         $events = $containerEvents->map(function ($event) {
@@ -321,11 +317,39 @@ class TrackingController extends ApiController
 
         // These fields are consumed by 06. Tracking so its summary always
         // reflects the latest movement from 04. Containers.
+        $latestPackageTransportEvent = $packageEvents
+            ->filter(function ($event) use ($transportStatuses) {
+                return in_array((string) $event->status, $transportStatuses, true);
+            })
+            ->last();
+
+        $packageMovementIsLatest = false;
+        if ($latestPackageTransportEvent) {
+            if (!$latestContainerEvent || !$latestContainerEvent->event_date) {
+                $packageMovementIsLatest = true;
+            } elseif ($latestPackageTransportEvent->event_at) {
+                $packageMovementAt = $latestPackageTransportEvent->event_at instanceof \Carbon\CarbonInterface
+                    ? $latestPackageTransportEvent->event_at
+                    : \Carbon\Carbon::parse($latestPackageTransportEvent->event_at);
+                $containerMovementAt = $latestContainerEvent->event_date instanceof \Carbon\CarbonInterface
+                    ? $latestContainerEvent->event_date
+                    : \Carbon\Carbon::parse($latestContainerEvent->event_date);
+
+                $packageMovementIsLatest = $packageMovementAt->gt($containerMovementAt);
+            }
+        }
+
         $package->setAttribute('container_status', $containerStatus);
         $package->setAttribute('container_current_location', $containerLocation);
         $package->setAttribute('container_updated_at', $containerUpdatedAt?->toISOString());
-        $package->setAttribute('tracking_status', $containerStatus ?: $package->status);
-        $package->setAttribute('tracking_location', $containerLocation ?: $package->warehouse_location);
+        $package->setAttribute(
+            'tracking_status',
+            $packageMovementIsLatest ? $latestPackageTransportEvent->status : ($containerStatus ?: $package->status)
+        );
+        $package->setAttribute(
+            'tracking_location',
+            $packageMovementIsLatest ? $latestPackageTransportEvent->location : ($containerLocation ?: $package->warehouse_location)
+        );
 
         return $this->ok([
             'package' => $package,

@@ -361,16 +361,43 @@ class CustomerShipmentController extends ApiController
         $container = $package->containers->first();
 
         /*
-         * Latest event = current tracking event.
+         * Keep the database workflow status intact.
+         * Use transport events for the customer-facing tracking display.
          */
         $latestEvent = $events->last();
 
+        $transportStatuses = [
+            'Pending',
+            'Loading',
+            'Departed China',
+            'In Transit',
+            'Cambodia Port',
+            'Customs',
+            'Cambodia Warehouse',
+            'Received',
+            'Received at China Warehouse',
+        ];
+
+        $latestTransportEvent = $events->filter(function ($event) use ($transportStatuses) {
+            return in_array((string) $event->status, $transportStatuses, true);
+        })->last();
+
+        $customerHasReceived = !empty($package->customer_received_at)
+            || strtolower(trim((string) $package->delivery_status)) === 'customer received'
+            || in_array(strtolower(trim((string) $package->status)), [
+                'customer received',
+                'delivered',
+            ], true);
+
+        $trackingDisplayStatus = $customerHasReceived
+            ? ($package->delivery_status ?: $package->status)
+            : ($latestTransportEvent?->status ?: $package->status);
+
         $currentLocation =
-            $package->warehouse_location
-            ?: (
-                $container?->current_location
-                ?: $package->to_warehouse
-            );
+            ($latestTransportEvent?->location)
+            ?: $package->warehouse_location
+            ?: $container?->current_location
+            ?: $package->to_warehouse;
 
         /*
          * Convert backend status
@@ -383,7 +410,7 @@ class CustomerShipmentController extends ApiController
          * 5 = Delivered
          */
         $stage = $this->calculateTrackingStage(
-            $package->status
+            $trackingDisplayStatus
         );
 
         /*
@@ -435,10 +462,10 @@ class CustomerShipmentController extends ApiController
                     $package->tracking_number,
 
                 'status' =>
-                    $package->status,
+                    $trackingDisplayStatus,
 
                 'status_label' =>
-                    $package->status,
+                    $trackingDisplayStatus,
 
                 'service_line' =>
                     $package->shipping_mode,
@@ -468,7 +495,7 @@ class CustomerShipmentController extends ApiController
                     'ភ្នំពេញ',
 
                 'warehouse' =>
-                    $package->warehouse_location,
+                    $currentLocation,
 
                 'current_location' =>
                     $currentLocation,
@@ -686,6 +713,9 @@ class CustomerShipmentController extends ApiController
             in_array($normalized, [
                 'in transit',
                 'in_transit',
+                'departed china',
+                'cambodia port',
+                'customs',
                 'consolidated',
                 'loaded',
                 'loading',

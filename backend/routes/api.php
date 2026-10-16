@@ -118,6 +118,7 @@ Route::get('/customer/warehouse-addresses', [
         Route::get('/packages/scan', [PackageController::class, 'scan']);
         // Must be declared BEFORE apiResource('packages') or {id} swallows it.
         Route::get('/packages/sync-logs', [PackageController::class, 'syncLogs']);
+        Route::post('/packages/{id}/movement', [PackageController::class, 'updateMovement']);
         Route::apiResource(
             'packages',
             PackageController::class

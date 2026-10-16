@@ -124,6 +124,18 @@ function toApi(input) {
   };
 }
 
+export async function updatePackageMovement(id, input) {
+  const payload = unwrap(await apiClient.post(
+    `/packages/${encodeURIComponent(id)}/movement`,
+    {
+      status: input.status,
+      location: input.location,
+      note: input.note || null,
+    }
+  ));
+  return normalizePackage(payload?.package ?? payload);
+}
+
 export async function confirmCustomerPickup(id, input) {
   const payload = unwrap(await apiClient.post(
     `/cambodia-warehouse/packages/${encodeURIComponent(id)}/customer-pickup`,

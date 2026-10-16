@@ -1,0 +1,1017 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Models\Package;
+use App\Models\PackageSyncLog;
+use App\Models\Container;
+use App\Models\Shipment;
+use App\Models\Invoice;
+use App\Models\Payment;
+use App\Models\Pricing;
+use App\Models\TrackingEvent;
+use Illuminate\Http\Request;
+use Illuminate\Support\Str;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
+use App\Models\Customer;
+use App\Services\ChinaWayBillService;
+
+class PackageController extends CrudController
+{
+    protected string $model = Package::class;
+
+    protected array $rules = [
+        'code'             => 'nullable|string',
+        'tracking_number'  => 'nullable|string',
+        'china_waybill_number' => 'nullable|string|max:255',
+        'hfl_package_code' => 'nullable|string|max:255|unique:packages,hfl_package_code',
+        'customer_id'     => 'required|string',
+        'customer_name'   => 'nullable|string',
+        'supplier'        => 'nullable|string',
+        'product_name'    => 'nullable|string',
+        'product_category' => 'nullable|string',
+        'quantity'        => 'nullable|integer|min:0',
+
+        'shipping_mode'   => 'required|in:SEA,LAND,AIR',
+        'pricing_type'    => 'required|in:GC,SC',
+
+        'from_warehouse'  => 'nullable|string',
+        'to_warehouse'    => 'nullable|string',
+        'status'          => 'nullable|string',
+        'shipping_date'   => 'nullable|date',
+        'eta'             => 'nullable|date',
+
+        'boxes'           => 'nullable|array',
+
+        'delivery_fee'    => 'nullable|numeric|min:0',
+        'handling_fee'    => 'nullable|numeric|min:0',
+        'warehouse_fee'   => 'nullable|numeric|min:0',
+        'other_fee'       => 'nullable|numeric|min:0',
+        'discount'        => 'nullable|numeric|min:0',
+    ];
+
+    protected function searchColumns(): array
+    {
+        return [
+            'package_id',
+            'code',
+            'tracking_number',
+            'china_waybill_number',
+            'hfl_package_code',
+            'customer_id',
+            'customer_name',
+            'product_name',
+        ];
+    }
+
+    /**
+     * Package 360: return the package and its connected logistics records.
+     */
+    public function show($id)
+    {
+        $package = Package::with(['customer', 'containers'])
+            ->findOrFail($id);
+
+        $tracking = TrackingEvent::where('package_id', $package->id)
+            ->orderByDesc('event_at')
+            ->orderByDesc('id')
+            ->get();
+
+        $containers = $package->containers;
+        $containerIds = $containers->pluck('id')->all();
+
+        $shipments = Shipment::query()
+            ->when($containerIds, function ($q) use ($containers) {
+                $numbers = $containers->pluck('container_number')->filter()->values()->all();
+                if ($numbers) {
+                    $q->whereIn('container_number', $numbers);
+                }
+            })
+            ->get();
+
+        $shipments = $shipments->filter(function ($shipment) use ($package) {
+            $ids = is_array($shipment->package_ids)
+                ? $shipment->package_ids
+                : (json_decode((string) $shipment->package_ids, true) ?: []);
+            return collect($ids)->map(fn ($v) => (string) $v)->contains((string) $package->id);
+        })->values();
+
+        if ($shipments->isEmpty()) {
+            $shipments = Shipment::query()->get()->filter(function ($shipment) use ($package) {
+                $ids = is_array($shipment->package_ids)
+                    ? $shipment->package_ids
+                    : (json_decode((string) $shipment->package_ids, true) ?: []);
+                return collect($ids)->map(fn ($v) => (string) $v)->contains((string) $package->id);
+            })->values();
+        }
+
+        $invoices = Invoice::query()->get()->filter(function ($invoice) use ($package) {
+            $items = is_array($invoice->items) ? $invoice->items : (json_decode((string) $invoice->items, true) ?: []);
+            return collect($items)->contains(fn ($item) => (string) ($item['package_id'] ?? '') === (string) $package->id);
+        })->values();
+
+        $payments = $invoices->isEmpty()
+            ? collect()
+            : Payment::whereIn('invoice_id', $invoices->pluck('id'))->latest()->get();
+
+        return $this->ok([
+            'package' => $package,
+            'customer' => $package->customer,
+            'containers' => $containers,
+            'shipments' => $shipments,
+            'tracking' => $tracking,
+            'invoices' => $invoices,
+            'payments' => $payments,
+            'connections' => [
+                'containers' => $containers->count(),
+                'shipments' => $shipments->count(),
+                'tracking_events' => $tracking->count(),
+                'invoices' => $invoices->count(),
+                'payments' => $payments->count(),
+            ],
+        ], 'Package 360');
+    }
+
+    /**
+     * Create package
+     * Automatically:
+     * 1. Calculate CBM
+     * 2. Find active pricing
+     * 3. Apply pricing
+     * 4. Calculate shipping cost
+     * 5. Calculate grand total
+     */
+    /**
+     * Staff-uploaded product photos (in addition to the ones from the China API).
+     * Files go to public/uploads/package-images/{package id}/ and only the relative
+     * path is stored, so the address keeps working when the domain changes.
+     */
+    public function uploadImages(Request $request, $id)
+    {
+        $package = Package::findOrFail($id);
+
+        $request->validate([
+            'images' => 'required|array|min:1|max:10',
+            'images.*' => 'file|mimes:jpg,jpeg,png,webp|max:5120',
+        ], [
+            'images.*.mimes' => 'Only JPG, PNG or WEBP photos are allowed.',
+            'images.*.max' => 'Each photo must be 5 MB or smaller.',
+            'images.*.file' => 'The photo could not be uploaded. Try a smaller image.',
+        ]);
+
+        $existing = is_array($package->custom_images) ? $package->custom_images : [];
+        $files = $request->file('images');
+
+        if (count($existing) + count($files) > 10) {
+            return $this->fail('A package can have at most 10 uploaded photos.', [], 422);
+        }
+
+        $dir = public_path('uploads/package-images/' . $package->id);
+        if (!is_dir($dir)) {
+            mkdir($dir, 0775, true);
+        }
+
+        foreach ($files as $file) {
+            $name = Str::lower(Str::random(16)) . '.' . $file->extension();
+            $file->move($dir, $name);
+            $existing[] = '/uploads/package-images/' . $package->id . '/' . $name;
+        }
+
+        $package->custom_images = array_values($existing);
+        $package->save();
+
+        return $this->ok($package->fresh(), 'Photos uploaded.');
+    }
+
+    public function deleteImage(Request $request, $id)
+    {
+        $package = Package::findOrFail($id);
+        $data = $request->validate(['url' => 'required|string']);
+
+        $existing = is_array($package->custom_images) ? $package->custom_images : [];
+
+        if (!in_array($data['url'], $existing, true)) {
+            return $this->fail('This photo is not an uploaded photo of the package.', [], 404);
+        }
+
+        $file = public_path('uploads/package-images/' . $package->id . '/' . basename($data['url']));
+        if (is_file($file)) {
+            @unlink($file);
+        }
+
+        $package->custom_images = array_values(array_filter($existing, fn ($u) => $u !== $data['url']));
+        $package->save();
+
+        return $this->ok($package->fresh(), 'Photo removed.');
+    }
+
+    public function store(Request $request)
+    {
+        $data = $request->validate($this->rules);
+
+        // Package ID is generated from the database row ID after insert.
+        // Do not use Package::count()+1: deletions/concurrent requests can create duplicates.
+        // China tracking/waybill remains the original seller/courier number and is never replaced.
+        $data['package_id'] = 'TMP-PKG-' . \Illuminate\Support\Str::uuid();
+        $data['code'] = $data['code'] ?? null;
+        $data['tracking_number'] = $data['tracking_number'] ?? null;
+
+        $data = $this->calculateAndApplyPricing($data);
+
+        $package = Package::create($data);
+        $package->package_id = 'PKG-' . str_pad((string) $package->id, 6, '0', STR_PAD_LEFT);
+        $package->code = $package->code ?: 'HFL-' . str_pad((string) $package->id, 6, '0', STR_PAD_LEFT);
+        $package->save();
+
+        TrackingEvent::create([
+            'tracking_number' => $package->tracking_number,
+            'package_id'      => $package->id,
+            'status'          => $package->status ?? 'CREATED',
+            'location'        => $package->from_warehouse,
+            'staff_name'      => 'System',
+            'note'            => 'Package created',
+            'event_at'        => now(),
+        ]);
+
+        return $this->ok($package, 'Created');
+    }
+
+    /**
+     * Recalculate the package CBM/weight pricing snapshot after warehouse measurement.
+     */
+    public function recalculatePricing(Package $package): Package
+    {
+        $data = $this->calculateAndApplyPricing($package->toArray());
+        unset($data['id'], $data['created_at'], $data['updated_at']);
+        $package->update($data);
+
+        return $package->fresh();
+    }
+
+    /**
+     * Update package
+     *
+     * Pricing is recalculated when package information changes.
+     */
+    public function update(Request $request, $id)
+    {
+        $package = Package::findOrFail($id);
+
+        $oldStatus = $package->status;
+
+        $rules = $this->rules;
+
+        foreach ($rules as $field => $rule) {
+            $rules[$field] = str_replace('required|', '', $rule);
+        }
+
+        // The package being edited must not collide with its own code.
+        $rules['hfl_package_code'] = [
+            'nullable', 'string', 'max:255',
+            \Illuminate\Validation\Rule::unique('packages', 'hfl_package_code')->ignore($package->id),
+        ];
+
+        $data = $request->validate($rules);
+
+        // Package status is controlled by the operational endpoints. The generic
+        // CRUD update must never bypass the logistics workflow.
+        if (array_key_exists('status', $data) && $data['status'] !== null && $data['status'] !== $oldStatus) {
+            return $this->fail(
+                "Package status cannot be changed through the generic update endpoint. Use the operational workflow action for {$data['status']}.",
+                ['status' => ['Current package status: ' . ($oldStatus ?: 'Unknown')]],
+                422
+            );
+        }
+
+        // Once billing starts, package financial/measurement data is locked.
+        // This prevents editing CBM/rates after an invoice or payment exists.
+        $lockedStatuses = [
+            'Ready for Billing',
+            'Invoiced',
+            'Partially Paid',
+            'Ready for Delivery',
+            'Scheduled',
+            'Out for Delivery',
+            'Delivered',
+            'Cancelled',
+            'Returned',
+            'Customer Received',
+        ];
+        $financialFields = [
+            'boxes', 'shipping_mode', 'pricing_type', 'from_warehouse', 'to_warehouse',
+            'delivery_fee', 'handling_fee', 'warehouse_fee', 'other_fee', 'discount',
+        ];
+
+        if (in_array($oldStatus, $lockedStatuses, true)) {
+            $attemptedLockedFields = array_values(array_intersect(array_keys($data), $financialFields));
+            if ($attemptedLockedFields) {
+                return $this->fail(
+                    'Package measurement and billing fields are locked after billing starts.',
+                    ['fields' => $attemptedLockedFields],
+                    422
+                );
+            }
+        }
+
+        $merged = array_merge(
+            $package->toArray(),
+            $data
+        );
+
+        // Recalculate only before the billing lock. Billing/Payment use the
+        // database snapshot already stored on the package/invoice.
+        if (!in_array($oldStatus, $lockedStatuses, true)) {
+            $merged = $this->calculateAndApplyPricing($merged);
+        }
+
+        unset($merged['status']);
+        $package->update($merged);
+
+        $newStatus = $package->status;
+
+        if ($newStatus !== $oldStatus) {
+            TrackingEvent::create([
+                'tracking_number' => $package->tracking_number,
+                'package_id'      => $package->id,
+                'status'          => $newStatus,
+                'location'        =>
+                    $package->warehouse_location
+                    ?? $package->to_warehouse,
+                'staff_name'      => 'Operations',
+                'note'            => 'Package status changed',
+                'event_at'        => now(),
+            ]);
+        }
+
+        return $this->ok($package, 'Updated');
+    }
+
+
+    /**
+     * Resolve the active database pricing for a package without forcing warehouse staff
+     * to manually choose a rate. Matching is deterministic and never invents a price:
+     * 1) exact route, 2) normalized warehouse name (e.g. "Yiwu Warehouse" -> "Yiwu"),
+     * 3) generic China-origin pricing, only when that rule is explicitly configured.
+     */
+    public function findActivePricingForPackage(
+        string $shippingMode,
+        string $pricingType,
+        string $origin,
+        string $destination
+    ): ?Pricing {
+        $today = now()->toDateString();
+
+        $normalize = static function (?string $value): string {
+            $value = trim(strtolower((string) $value));
+            $value = str_replace([',', '-', '_', '/'], ' ', $value);
+            $value = preg_replace('/\s+/', ' ', $value);
+            $value = preg_replace('/\s+warehouse$/', '', $value);
+            $value = preg_replace('/\s+china$/', '', $value);
+            return trim($value);
+        };
+
+        // HFL has many China origins, but one final Cambodia warehouse.
+        // Pricing therefore matches by Origin + Shipping Mode + Pricing Type,
+        // while destination labels are normalized to the same Cambodia warehouse.
+        $normalizeDestination = static function (?string $value) use ($normalize): string {
+            $v = $normalize($value);
+            if ($v === '') return '';
+            if (in_array($v, [
+                'cambodia',
+                'cambodia warehouse',
+                'phnom penh',
+                'phnom penh warehouse',
+                'phnom penh cambodia',
+                'phnom penh cambodia warehouse',
+            ], true)) {
+                return 'cambodia warehouse';
+            }
+            return $v;
+        };
+
+        $normalizedOrigin = $normalize($origin);
+        $normalizedDestination = $normalizeDestination($destination);
+
+        $base = Pricing::query()
+            ->where('shipping_mode', strtoupper(trim($shippingMode)))
+            ->where('pricing_type', strtoupper(trim($pricingType)))
+            ->where('status', 'Active')
+            ->where(function ($query) use ($today) {
+                $query->whereNull('effective_date')
+                    ->orWhereDate('effective_date', '<=', $today);
+            })
+            ->where(function ($query) use ($today) {
+                $query->whereNull('expiry_date')
+                    ->orWhereDate('expiry_date', '>=', $today);
+            })
+            ->orderByDesc('effective_date')
+            ->orderByDesc('id');
+
+        $candidates = $base->get();
+
+        // 1) Exact Origin + normalized Cambodia destination.
+        $exact = $candidates->first(function ($pricing) use ($normalize, $normalizeDestination, $normalizedOrigin, $normalizedDestination) {
+            return $normalize($pricing->origin) === $normalizedOrigin
+                && $normalizeDestination($pricing->destination) === $normalizedDestination;
+        });
+        if ($exact) return $exact;
+
+        // 2) Generic China rule is allowed only when explicitly configured.
+        $genericOrigins = ['china', 'all china', 'china warehouses'];
+        return $candidates->first(function ($pricing) use ($normalize, $normalizeDestination, $normalizedDestination, $genericOrigins) {
+            return in_array($normalize($pricing->origin), $genericOrigins, true)
+                && $normalizeDestination($pricing->destination) === $normalizedDestination;
+        });
+    }
+
+    /**
+     * Scan a package using any operational identifier.
+     * Returns the package 360 payload so warehouse staff can immediately act on it.
+     */
+
+    public function scan(Request $request)
+    {
+        $value = trim((string) $request->input('value', ''));
+        if ($value === '') {
+            return $this->fail('Scan value is required.', [], 422);
+        }
+
+        $package = Package::with(['customer', 'containers'])->where(function ($q) use ($value) {
+            foreach ([
+                'package_id', 'code', 'tracking_number', 'china_waybill_number', 'hfl_package_code', 'customer_id',
+                'customer_name', 'product_name',
+            ] as $column) {
+                $q->orWhere($column, $value);
+            }
+        })->first();
+
+        if (!$package) {
+            return $this->fail('Package not found: '.$value, [], 404);
+        }
+
+        return $this->show($package->id);
+    }
+
+    /**
+     * Confirm physical receipt at a China warehouse.
+     * This is intentionally separate from China API synchronization: API sync imports
+     * the record, while this action confirms that warehouse staff physically received it.
+     */
+    public function receiveChina(Request $request, $id)
+    {
+        $data = $request->validate([
+            'warehouse_location' => 'required|string|max:255',
+            'note' => 'nullable|string|max:1000',
+        ]);
+
+        return DB::transaction(function () use ($id, $data) {
+            $package = Package::findOrFail($id);
+            $oldStatus = $package->status;
+            $oldLocation = $package->warehouse_location;
+
+            if (!in_array($oldStatus, ['Order Created', 'Received at China Warehouse', 'Waiting Shipment'], true)) {
+                return $this->fail(
+                    'China warehouse receipt cannot move a package backwards from its current workflow stage.',
+                    ['package_status' => $oldStatus],
+                    422
+                );
+            }
+
+            $package->warehouse_location = $data['warehouse_location'];
+            $package->received_at = $package->received_at ?: now();
+            $package->status = 'Received at China Warehouse';
+
+            // Generate HFL's new tracking number only when the China
+            // warehouse physically confirms receipt. The China delivery/courier
+            // number remains in china_waybill_number and is never overwritten.
+            $oldTrackingNumber = $package->tracking_number;
+            if (empty($package->tracking_number)) {
+                $package->tracking_number = $this->generateHflTrackingNumber($package->id);
+            }
+
+            // Keep the separate internal HFL package code as a second identifier.
+            if (empty($package->hfl_package_code)) {
+                $package->hfl_package_code = $this->generateHflPackageCode($package->id);
+            }
+
+            $package->save();
+
+            // Re-key earlier China-warehouse tracking events to the new HFL
+            // tracking number so the complete history remains visible from the
+            // HFL tracking number after receipt.
+            TrackingEvent::where('package_id', $package->id)
+                ->update(['tracking_number' => $package->tracking_number]);
+
+            if ($oldStatus !== $package->status || $oldLocation !== $package->warehouse_location) {
+                TrackingEvent::create([
+                    'tracking_number' => $package->tracking_number,
+                    'package_id' => $package->id,
+                    'status' => $package->status,
+                    'location' => $data['warehouse_location'],
+                    'warehouse' => 'China Warehouse',
+                    'staff_name' => auth()->user()?->name ?? 'China Warehouse',
+                    'note' => $data['note'] ?? 'Package physically received at China warehouse',
+                    'event_at' => now(),
+                ]);
+            }
+
+            return $this->ok($package->fresh(['customer', 'containers']), 'Package received at China warehouse.');
+        });
+    }
+
+    /**
+     * Generate the internal HFL China warehouse package code.
+     *
+     * Example format: YC1000202930
+     * The code is intentionally different from the seller/courier waybill.
+     */
+    /**
+     * Generate HFL's new warehouse tracking number.
+     * Example: YC100200300
+     * This is different from the China delivery/courier waybill.
+     */
+    private function generateHflTrackingNumber(int $packageId): string
+    {
+        $number = 100200299 + $packageId;
+        $tracking = 'YC' . str_pad((string) $number, 9, '0', STR_PAD_LEFT);
+
+        while (Package::where('tracking_number', $tracking)->exists()) {
+            $number++;
+            $tracking = 'YC' . str_pad((string) $number, 9, '0', STR_PAD_LEFT);
+        }
+
+        return $tracking;
+    }
+
+    private function generateHflPackageCode(int $packageId): string
+    {
+        $number = 1000202929 + $packageId;
+        $code = 'YC' . str_pad((string) $number, 10, '0', STR_PAD_LEFT);
+
+        while (Package::where('hfl_package_code', $code)->exists()) {
+            $number++;
+            $code = 'YC' . str_pad((string) $number, 10, '0', STR_PAD_LEFT);
+        }
+
+        return $code;
+    }
+
+    /**
+     * Sync packages from China API.
+     */
+    public function syncChina(Request $request)
+    {
+        $started = now();
+        try {
+            $result = app(ChinaWayBillService::class)->queryAll(
+                $request->input('inside_no'),
+                $request->input('date_from'),
+                $request->input('date_to')
+            );
+            $rows = $result['rows'];
+            // Helps identify the real image field name used by the China API.
+            \Log::info('China API sample row keys', ['keys' => array_keys($rows[0] ?? [])]);
+            $created = 0; $updated = 0; $duplicates = 0; $failed = 0; $containers = 0; $containerPackages = 0; $errors = [];
+
+            DB::transaction(function () use ($rows, &$created, &$updated, &$duplicates, &$failed, &$containers, &$containerPackages, &$errors) {
+                foreach ($rows as $row) {
+                    try {
+                        $tracking = trim((string)($row['Number'] ?? $row['tracking_number'] ?? $row['trackingNumber'] ?? $row['tracking'] ?? ''));
+                        if ($tracking === '') throw new \RuntimeException('Missing China waybill Number.');
+
+                        $customerId = trim((string)($row['CustomerNumber'] ?? $row['CustomerId'] ?? $row['customer_id'] ?? ''));
+                        if ($customerId === '') {
+                            $nextCustomer = ((int) Customer::where('customer_id', 'like', 'HFL%')->count()) + 1;
+                            do {
+                                $customerId = 'HFL' . str_pad((string) $nextCustomer, 5, '0', STR_PAD_LEFT);
+                                $nextCustomer++;
+                            } while (Customer::where('customer_id', $customerId)->exists());
+                        }
+                        $customerName = trim((string)($row['CustomerName'] ?? $row['customer_name'] ?? '')) ?: $customerId;
+                        Customer::firstOrCreate(['customer_id'=>$customerId], [
+                            'full_name'=>$customerName,
+                            'company_name'=>$customerName,
+                            'status'=>'Active',
+                            'registration_date'=>now()->toDateString(),
+                        ]);
+
+                        $insideNo = trim((string)($row['InsideNO'] ?? $row['ExternalNO'] ?? ''));
+                        $existing = Package::where('china_waybill_number', $tracking)
+                            ->orWhere('tracking_number', $tracking)
+                            ->first();
+                        $data = $this->mapChinaPackage($row, $existing);
+                        $data['customer_id'] = $customerId;
+                        $data['customer_name'] = $customerName;
+                        // Number from China is the original delivery/courier tracking.
+                        // Never overwrite an existing HFL tracking number.
+                        $data['tracking_number'] = $existing?->tracking_number;
+                        $data['china_waybill_number'] = $tracking;
+                        $data = $this->calculateAndApplyPricing($data);
+                        if ($existing) {
+                            $existing->update($data);
+                            $package = $existing->fresh();
+                            $updated++; $duplicates++;
+                        } else {
+                            $data['package_id']='TMP-PKG-'.(string) \Illuminate\Support\Str::uuid();
+                            $package=Package::create($data);
+                            $package->package_id='PKG-'.str_pad((string)$package->id,6,'0',STR_PAD_LEFT);
+                            $package->code=$package->code ?: 'HFL-'.str_pad((string)$package->id,6,'0',STR_PAD_LEFT);
+                            $package->save();
+                            TrackingEvent::create([
+                                'tracking_number'=>$package->tracking_number ?: $package->china_waybill_number,
+                                'package_id'=>$package->id,
+                                'status'=>$package->status ?: 'Received at China Warehouse',
+                                'location'=>$package->from_warehouse ?: 'China Warehouse',
+                                'staff_name'=>'China API','note'=>'Imported from China API','event_at'=>now(),
+                            ]);
+                            $created++;
+                        }
+
+                        if ($insideNo !== '') {
+                            $container = Container::firstOrCreate(['container_number'=>$insideNo], [
+                                'container_type'=>env('CHINA_DEFAULT_CONTAINER_TYPE','40HQ'),
+                                'shipping_mode'=>$package->shipping_mode ?: env('CHINA_DEFAULT_SHIPPING_MODE','SEA'),
+                                'origin'=>$package->from_warehouse ?: env('CHINA_DEFAULT_ORIGIN','China'),
+                                'destination'=>$package->to_warehouse ?: env('CHINA_DEFAULT_DESTINATION','Cambodia'),
+                                'current_location'=>env('CHINA_DEFAULT_LOCATION','China Warehouse'),
+                                'status'=>env('CHINA_DEFAULT_CONTAINER_STATUS','Loading'),
+                            ]);
+                            if ($container->wasRecentlyCreated) {
+                                $containers++;
+                                \App\Models\ContainerTrackingEvent::create([
+                                    'container_id'=>$container->id,
+                                    'location'=>$container->current_location ?: 'China Warehouse',
+                                    'status'=>$container->status ?: 'Loading',
+                                    'event_date'=>now(),
+                                    'remarks'=>'Container discovered from China API',
+                                ]);
+                            }
+                            if (!$container->packages()->where('packages.id',$package->id)->exists()) {
+                                $container->packages()->attach($package->id, ['loaded_at'=>now()]);
+                                $containerPackages++;
+                            }
+                        }
+                    } catch (\Throwable $e) {
+                        $failed++; $errors[] = substr($e->getMessage(),0,250);
+                    }
+                }
+            });
+
+            $status = $failed ? 'partial' : 'success';
+            PackageSyncLog::create([
+                'source'=>'china_api','status'=>$status,'received'=>count($rows),'created_count'=>$created,
+                'updated_count'=>$updated,'duplicate_count'=>$duplicates,'failed_count'=>$failed,
+                'message'=>(app(ChinaWayBillService::class)->isMock() ? '[FAKE China API] ' : '').'China packages and containers synchronization completed.','errors'=>$errors,'containers_created'=>$containers,'packages_attached'=>$containerPackages,'synced_at'=>$started,
+            ]);
+            return $this->ok([
+                'received'=>count($rows),'created'=>$created,'updated'=>$updated,'duplicates'=>$duplicates,
+                'failed'=>$failed,'containers_created'=>$containers,'packages_attached'=>$containerPackages,
+                'mode'=>app(ChinaWayBillService::class)->isMock() ? 'mock' : 'real','pages'=>$result['pages'],'reported_count'=>$result['count'],'synced_at'=>$started,'errors'=>$errors,
+            ], 'China package/container sync completed');
+        } catch (\Throwable $e) {
+            PackageSyncLog::create(['source'=>'china_api','status'=>'failed','message'=>$e->getMessage(),'failed_count'=>1,'synced_at'=>$started]);
+            return $this->fail('China API sync failed: '.$e->getMessage(),[],422);
+        }
+    }
+
+    /**
+     * Sync history.
+     */
+    public function syncLogs(Request $request)
+    {
+        return $this->ok(
+            PackageSyncLog::latest('synced_at')
+                ->paginate(
+                    (int) $request->input('per_page', 20)
+                ),
+            'Sync logs'
+        );
+    }
+
+    /**
+     * Map China API package fields to HFL package fields.
+     */
+    private function mapChinaPackage(
+        array $row,
+        ?Package $existing = null
+    ): array {
+        return [
+
+            'code' =>
+                $row['code']
+                ?? $row['package_code']
+                ?? $existing?->code,
+
+            // HFL tracking is created at physical China-warehouse receipt.
+            // Upstream China delivery number is stored separately below.
+            'tracking_number' => $existing?->tracking_number,
+
+            'customer_id' =>
+                $row['customer_id']
+                ?? $row['customerId']
+                ?? $existing?->customer_id,
+
+            'customer_name' =>
+                $row['customer_name']
+                ?? $row['customerName']
+                ?? $existing?->customer_name,
+
+            'supplier' =>
+                $row['supplier']
+                ?? $existing?->supplier,
+
+            'product_name' =>
+                $row['product_name']
+                ?? $row['productName']
+                ?? $row['GoodsName']
+                ?? $row['name']
+                ?? $existing?->product_name,
+
+            'product_category' =>
+                $row['product_category']
+                ?? $row['category']
+                ?? $existing?->product_category,
+
+            'quantity' =>
+                (int) (
+                    $row['quantity']
+                    ?? $existing?->quantity
+                    ?? 0
+                ),
+
+            'shipping_mode' =>
+                $row['shipping_mode']
+                ?? $row['shippingMode']
+                ?? $existing?->shipping_mode
+                ?? 'LAND',
+
+            'pricing_type' =>
+                $row['pricing_type']
+                ?? $row['pricingType']
+                ?? $existing?->pricing_type
+                ?? 'GC',
+
+            'from_warehouse' =>
+                $row['from_warehouse']
+                ?? $row['warehouse']
+                ?? $existing?->from_warehouse
+                ?? 'China Warehouse',
+
+            'to_warehouse' =>
+                $row['to_warehouse']
+                ?? $existing?->to_warehouse,
+
+            'status' =>
+                $row['status']
+                ?? $existing?->status
+                ?? 'Received at China Warehouse',
+
+            'shipping_date' =>
+                $row['shipping_date']
+                ?? $existing?->shipping_date,
+
+            'eta' =>
+                $row['eta']
+                ?? $existing?->eta,
+
+            'boxes' =>
+                $row['boxes']
+                ?? $existing?->boxes
+                ?? [],
+
+            'total_cbm' => isset($row['CustomerVolume']) ? (float)$row['CustomerVolume'] : ($existing?->total_cbm ?? 0),
+            'box_count' => isset($row['ExpressQTY']) ? (int)$row['ExpressQTY'] : ($existing?->box_count ?? 0),
+            'china_waybill_number' => $row['Number']
+                ?? $row['tracking_number']
+                ?? $row['trackingNumber']
+                ?? $row['tracking']
+                ?? $existing?->china_waybill_number,
+            'china_container_number' => $row['InsideNO'] ?? $row['ExternalNO'] ?? null,
+
+            // Product photos from the China API (keep the old ones if none arrive).
+            'product_images' => (function () use ($row, $existing) {
+                $images = app(ChinaWayBillService::class)->extractImages($row);
+                return !empty($images) ? $images : ($existing?->product_images ?: null);
+            })(),
+
+            'warehouse_location' =>
+                $row['warehouse_location']
+                ?? $row['location']
+                ?? $existing?->warehouse_location,
+
+            'received_at' =>
+                $row['received_at']
+                ?? $existing?->received_at,
+        ];
+    }
+
+    /**
+     * Calculate CBM / weight and automatically apply active pricing.
+     */
+    private function calculateAndApplyPricing(array $data): array
+    {
+        // Eloquent toArray() may include loaded relationships such as `customer`
+        // and `containers`. Those are not database columns on the packages table
+        // and must never be passed to Package::update().
+        unset($data['customer'], $data['containers']);
+
+        $boxes = $data['boxes'] ?? [];
+
+        $cbm = 0;
+        $weight = 0;
+        $boxCount = 0;
+
+        foreach ($boxes as $box) {
+
+            $length =
+                (float) ($box['length'] ?? 0);
+
+            $width =
+                (float) ($box['width'] ?? 0);
+
+            $height =
+                (float) ($box['height'] ?? 0);
+
+            $quantity =
+                max(
+                    0,
+                    (int) ($box['quantity'] ?? 1)
+                );
+
+            $unit =
+                strtolower(
+                    (string) ($box['unit'] ?? 'cm')
+                );
+
+            if ($unit === 'm') {
+                $factor = 1;
+            } elseif ($unit === 'mm') {
+                $factor = 1000000000;
+            } else {
+                $factor = 1000000;
+            }
+
+            $cbm +=
+                (
+                    $length *
+                    $width *
+                    $height *
+                    $quantity
+                ) / $factor;
+
+            $weight +=
+                (float) ($box['weight'] ?? 0);
+
+            $boxCount += $quantity;
+        }
+
+        $hasDimensions = count($boxes) > 0 && $cbm > 0;
+        if ($hasDimensions) {
+            $data['total_cbm'] = round($cbm, 6);
+            $data['box_count'] = $boxCount;
+        } else {
+            $data['total_cbm'] = round((float)($data['total_cbm'] ?? 0), 6);
+            $data['box_count'] = (int)($data['box_count'] ?? 0);
+        }
+
+        $data['total_weight'] = round($weight > 0 ? $weight : (float)($data['total_weight'] ?? 0), 3);
+
+        /*
+         * Find active pricing from database.
+         *
+         * IMPORTANT:
+         * Pricing is NEVER hard-coded here.
+         */
+        $shippingMode =
+            strtoupper(
+                (string) ($data['shipping_mode'] ?? '')
+            );
+
+        $pricingType =
+            strtoupper(
+                (string) ($data['pricing_type'] ?? 'GC')
+            );
+
+        $origin =
+            trim(
+                (string) ($data['from_warehouse'] ?? '')
+            );
+
+        $destination =
+            trim(
+                (string) ($data['to_warehouse'] ?? '')
+            );
+
+        $pricing = null;
+
+        if (
+            in_array($shippingMode, ['SEA', 'LAND', 'AIR'], true)
+            && in_array($pricingType, ['GC', 'SC'], true)
+            && $destination !== ''
+        ) {
+            $pricing = $this->findActivePricingForPackage(
+                $shippingMode,
+                $pricingType,
+                $origin,
+                $destination
+            );
+        }
+
+        /*
+         * If pricing is found, snapshot the pricing
+         * information onto the package.
+         */
+        if ($pricing) {
+
+            $data['pricing_id'] =
+                $pricing->pricing_id;
+
+            $data['pricing_rate_type'] =
+                $pricing->rate_type;
+
+            $data['shipping_rate'] =
+                (float) $pricing->rate;
+
+            $minimumCbm =
+                (float) (
+                    $pricing->minimum_cbm ?? 0
+                );
+
+            $rateType =
+                strtoupper(
+                    (string) $pricing->rate_type
+                );
+
+            if ($rateType === 'KG') {
+
+                $chargeable =
+                    $weight;
+
+            } else {
+
+                $chargeable =
+                    max(
+                        $cbm,
+                        $minimumCbm
+                    );
+            }
+
+            $data['shipping_cost'] =
+                round(
+                    $chargeable *
+                    (float) $pricing->rate,
+                    2
+                );
+
+        } else {
+
+            /*
+             * No pricing found.
+             *
+             * Do NOT invent a rate.
+             */
+            $data['pricing_id'] =
+                $data['pricing_id'] ?? null;
+
+            $data['pricing_rate_type'] =
+                $data['pricing_rate_type']
+                ?? 'CBM';
+
+            $data['shipping_rate'] =
+                $data['shipping_rate']
+                ?? 0;
+
+            $data['shipping_cost'] =
+                0;
+        }
+
+        $fees =
+            (float) ($data['delivery_fee'] ?? 0)
+            + (float) ($data['handling_fee'] ?? 0)
+            + (float) ($data['warehouse_fee'] ?? 0)
+            + (float) ($data['other_fee'] ?? 0);
+
+        $discount =
+            (float) ($data['discount'] ?? 0);
+
+        $data['grand_total'] =
+            max(
+                0,
+                (float) ($data['shipping_cost'] ?? 0)
+                + $fees
+                - $discount
+            );
+
+        /*
+         * Keep normalized values.
+         */
+        $data['shipping_mode'] =
+            $shippingMode ?: ($data['shipping_mode'] ?? 'LAND');
+
+        $data['pricing_type'] =
+            $pricingType ?: 'GC';
+
+        return $data;
+    }
+}

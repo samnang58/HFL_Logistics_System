@@ -458,6 +458,63 @@ class PackageController extends CrudController
      * This is intentionally separate from China API synchronization: API sync imports
      * the record, while this action confirms that warehouse staff physically received it.
      */
+
+    /**
+     * Update movement for one package only.
+     * Financial workflow statuses are intentionally preserved.
+     */
+    public function updateMovement(Request $request, $id)
+    {
+        $data = $request->validate([
+            'status' => 'required|string|in:Pending,Loading,Departed China,In Transit,Cambodia Port,Customs,Cambodia Warehouse,Received,Received at China Warehouse',
+            'location' => 'required|string|max:255',
+            'note' => 'nullable|string|max:1000',
+        ]);
+
+        return DB::transaction(function () use ($id, $data) {
+            $package = Package::whereKey($id)->lockForUpdate()->firstOrFail();
+
+            $transportStatuses = [
+                'Order Created',
+                'Received at China Warehouse',
+                'Waiting Shipment',
+                'Pending',
+                'Loading',
+                'Departed China',
+                'In Transit',
+                'Cambodia Port',
+                'Customs',
+                'Cambodia Warehouse',
+                'Received',
+            ];
+
+            $package->warehouse_location = $data['location'];
+
+            // Do not overwrite billing, payment, delivery, or pickup workflow states.
+            if (in_array($package->status, $transportStatuses, true)) {
+                $package->status = $data['status'];
+            }
+
+            $package->save();
+
+            TrackingEvent::create([
+                'tracking_number' => $package->tracking_number,
+                'package_id' => $package->id,
+                'status' => $data['status'],
+                'location' => $data['location'],
+                'warehouse' => $data['location'],
+                'staff_name' => auth()->user()?->name ?? 'Operations',
+                'note' => $data['note'] ?? 'Package movement updated',
+                'event_at' => now(),
+            ]);
+
+            return $this->ok(
+                $package->fresh(['customer', 'containers']),
+                'Package movement updated successfully.'
+            );
+        });
+    }
+
     public function receiveChina(Request $request, $id)
     {
         $data = $request->validate([
