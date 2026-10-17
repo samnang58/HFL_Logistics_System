@@ -478,7 +478,8 @@ export default function InvoicePrintView() {
 
                   
                   <td>
-                    {item.tracking_number ||
+                    {item.china_waybill_number ||
+                      item.tracking_number ||
                       item.hfl_package_code ||
                       item.package_code ||
                       item.package_number ||
