@@ -190,9 +190,31 @@ class InvoiceController extends CrudController
             // Update the shipping line while preserving its tracking/package identity.
             $shippingItem['cbm'] = $finalCbm;
             $shippingItem['weight'] = $finalWeight;
-            $shippingItem['quantity'] = $rateType === 'KG'
-                ? max(1, $finalWeight)
-                : ($finalCbm > 0 ? $finalCbm : 1);
+            // Quantity represents the package box/item count, not CBM or weight.
+            
+            $boxCount = (int) ($package?->box_count ?? 0);
+            $itemQuantity = (int) ($package?->quantity ?? 0);
+
+            $shippingItem['quantity'] = max(
+                1,
+                $boxCount > 0
+                    ? $boxCount
+                    : (
+                        $itemQuantity > 0
+                            ? $itemQuantity
+                            : (int) ($shippingItem['quantity'] ?? 1)
+                    )
+            );
+
+            if ($package) {
+                $shippingItem['description'] = trim(
+                    (string) (
+                        $package->product_name
+                        ?: $package->product_category
+                        ?: ($shippingItem['description'] ?? 'Logistics Service')
+                    )
+                );
+            }
             $shippingItem['unit_price'] = $rate;
             $shippingItem['amount'] = $shippingCost;
             $items[$shippingIndex] = $shippingItem;
@@ -1164,15 +1186,18 @@ class InvoiceController extends CrudController
 
             $cbm = $finalCbm;
 
-            $quantity =
-                $cbm > 0
-                    ? $cbm
-                    : max(
-                        1,
-                        (int) (
-                            $package->quantity ?? 1
-                        )
-                    );
+            // Quantity represents the number of boxes/items, not CBM.
+            
+            $boxCount = (int) ($package->box_count ?? 0);
+            $itemQuantity = (int) ($package->quantity ?? 0);
+
+            $quantity = max(
+                1,
+                $boxCount > 0
+                    ? $boxCount
+                    : $itemQuantity
+            );
+
 
             $items = [
                 [
@@ -1187,10 +1212,10 @@ class InvoiceController extends CrudController
 
                     'description' =>
                         trim(
-                            'China → Cambodia '
-                            . (
-                                $package->shipping_mode
-                                ?? 'Logistics Service'
+                            (string) (
+                                $package->product_name
+                                ?: $package->product_category
+                                ?: 'Logistics Service'
                             )
                         ),
 
