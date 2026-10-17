@@ -476,11 +476,16 @@ export default function InvoicePrintView() {
                     {index + 1}
                   </td>
 
+                  
                   <td>
                     {item.tracking_number ||
+                      item.hfl_package_code ||
+                      item.package_code ||
+                      item.package_number ||
                       item.code ||
                       "—"}
                   </td>
+
 
                   <td className="item-name">
                     {item.description ||
