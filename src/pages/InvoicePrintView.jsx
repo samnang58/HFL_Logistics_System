@@ -489,14 +489,15 @@ export default function InvoicePrintView() {
 
 
                   <td className="item-name">
-                    {item.description ||
-                      item.product_name ||
+                    {item.product_name ||
+                      item.description ||
                       "—"}
                   </td>
 
                   <td>
-                    {item.package_id ||
-                      item.package_number ||
+                    {item.package_number ||
+                      item.package_code ||
+                      item.code ||
                       "—"}
                   </td>
 

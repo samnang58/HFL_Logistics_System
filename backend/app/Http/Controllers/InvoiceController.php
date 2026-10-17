@@ -86,6 +86,54 @@ class InvoiceController extends CrudController
             ->orderByDesc('paid_at')
             ->get();
 
+        // Normalize display-only shipping item fields from the current package.
+        // Do not save the invoice or change any billing amounts.
+        $items = is_array($invoice->items) ? $invoice->items : [];
+
+        $displayItems = collect($items)->map(function ($item) {
+            if (
+                !is_array($item) ||
+                strtolower((string) ($item['type'] ?? '')) !== 'shipping'
+            ) {
+                return $item;
+            }
+
+            $packageId = $item['package_id'] ?? null;
+            $package = $packageId !== null
+                ? Package::find($packageId)
+                : null;
+
+            if (!$package) {
+                return $item;
+            }
+
+            $productName = trim((string) (
+                $package->product_name
+                ?: $package->product_category
+                ?: 'Logistics Service'
+            ));
+
+            $boxCount = (int) ($package->box_count ?? 0);
+            $itemQuantity = (int) ($package->quantity ?? 0);
+
+            $item['product_name'] = $productName;
+            $item['package_number'] = $package->package_id
+                ?: ($item['package_number'] ?? null);
+            $item['china_waybill_number'] = $package->china_waybill_number
+                ?: ($package->tracking_number ?: ($item['china_waybill_number'] ?? null));
+            $item['tracking_number'] = $package->tracking_number
+                ?: ($item['tracking_number'] ?? null);
+            $item['hfl_package_code'] = $package->hfl_package_code
+                ?: ($item['hfl_package_code'] ?? null);
+            $item['quantity'] = max(
+                1,
+                $boxCount > 0 ? $boxCount : $itemQuantity
+            );
+
+            return $item;
+        })->values()->all();
+
+        $invoice->setAttribute('items', $displayItems);
         $invoice->setAttribute('payments', $payments);
 
         return $this->ok($invoice, 'Invoice retrieved');
