@@ -144,9 +144,18 @@ class TelegramWebhookController extends Controller
                 $telegram->sendMessage(
                     $chatId,
                     "☎️ ទំនាក់ទំនង HFL Logistics\n\n"
-                    . "សូមទាក់ទងតាមបណ្តាញផ្លូវការរបស់ HFL។\n"
-                    . "លេខទូរស័ព្ទ និងតំណ Telegram ផ្លូវការនឹងត្រូវបន្ថែម "
-                    . "នៅពេលអ្នកផ្តល់ព័ត៌មានត្រឹមត្រូវ។",
+                    . "សូមជ្រើសរើសបុគ្គលិកសេវាកម្មអតិថិជន៖\n\n"
+                    . "1️⃣ HFL Customer Service\n"
+                    . "📱 Phone: 086 817 718\n"
+                    . "🔗 https://t.me/hfllogistics_customer_service\n\n"
+                    . "2️⃣ Pich Customer Service\n"
+                    . "📱 Phone: 088 624 8887\n"
+                    . "🔗 https://t.me/Pich_customerservice\n\n"
+                    . "3️⃣ Nith Customer Service\n"
+                    . "📱 Phone: 086 298 922\n"
+                    . "🔗 https://t.me/hflcustomerservice_nith\n\n"
+                    . "HFL Smart Logistics — យើងខ្ញុំរីករាយ "
+                    . "ក្នុងការជួយដោះស្រាយបញ្ហារបស់អ្នក។",
                     $keyboard
                 );
             } elseif (!str_starts_with($text, '/')) {
