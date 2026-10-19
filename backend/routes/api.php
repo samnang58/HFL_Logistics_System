@@ -2,7 +2,7 @@
 
 use Illuminate\Support\Facades\Route;
 
-
+use App\Http\Controllers\Telegram\TelegramWebhookController;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\CustomerAuthController;
 use App\Http\Controllers\CustomerShipmentController;
@@ -35,7 +35,8 @@ use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\TestDataController;
 
 Route::prefix('v1')->group(function () {
-
+Route::post('/telegram/webhook', TelegramWebhookController::class)
+    ->middleware('throttle:60,1');
     /*
     |--------------------------------------------------------------------------
     | Authentication
