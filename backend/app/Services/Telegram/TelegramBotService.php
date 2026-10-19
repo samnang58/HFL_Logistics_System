@@ -35,14 +35,21 @@ class TelegramBotService
 
     public function sendMessage(
         int|string $chatId,
-        string $text
+        string $text,
+        ?array $replyMarkup = null
     ): array {
+        $payload = [
+            'chat_id' => $chatId,
+            'text' => $text,
+        ];
+
+        if ($replyMarkup !== null) {
+            $payload['reply_markup'] = $replyMarkup;
+        }
+
         $response = $this->client()->post(
             $this->endpoint('sendMessage'),
-            [
-                'chat_id' => $chatId,
-                'text' => $text,
-            ]
+            $payload
         );
 
         $response->throw();

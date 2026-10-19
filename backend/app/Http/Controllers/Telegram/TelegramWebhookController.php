@@ -58,19 +58,37 @@ class TelegramWebhookController extends Controller
         $command = strtolower(explode('@', $parts[0] ?? '')[0]);
         $cacheKey = 'telegram:track:' . $chatId;
 
+        $trackButton = '🔎 តាមដានទំនិញ';
+        $packagesButton = '📦 កញ្ចប់ទំនិញរបស់ខ្ញុំ';
+        $helpButton = '❓ ជំនួយ';
+        $contactButton = '☎️ ទំនាក់ទំនង HFL';
+
+        $keyboard = [
+            'keyboard' => [
+                [
+                    ['text' => $trackButton],
+                    ['text' => $packagesButton],
+                ],
+                [
+                    ['text' => $helpButton],
+                    ['text' => $contactButton],
+                ],
+            ],
+            'resize_keyboard' => true,
+            'is_persistent' => true,
+            'input_field_placeholder' => 'ជ្រើសរើសមុខងារ HFL...',
+        ];
+
         try {
             if ($command === '/start') {
                 Cache::forget($cacheKey);
 
                 $reply =
                     "សូមស្វាគមន៍មកកាន់ HFL Smart Logistics! 📦\n\n"
-                    . "🔎 /track - តាមដានទំនិញ\n"
-                    . "📦 /my_packages - កញ្ចប់ទំនិញរបស់ខ្ញុំ\n"
-                    . "❓ /help - ជំនួយ\n"
-                    . "☎️ /contact - ទំនាក់ទំនង";
+                    . "សូមជ្រើសរើសមុខងារខាងក្រោម ដើម្បីប្រើប្រាស់សេវាកម្ម HFL។";
 
-                $telegram->sendMessage($chatId, $reply);
-            } elseif ($command === '/help') {
+                $telegram->sendMessage($chatId, $reply, $keyboard);
+            } elseif ($command === '/help' || $text === $helpButton) {
                 $telegram->sendMessage(
                     $chatId,
                     "📦 HFL Smart Logistics\n\n"
@@ -78,9 +96,11 @@ class TelegramWebhookController extends Controller
                     . "អ្នកអាចវាយ /track តាមដោយ Tracking Number "
                     . "ឬវាយ /track រួចផ្ញើលេខកញ្ចប់ក្នុងសារបន្ទាប់។\n\n"
                     . "/my_packages - កញ្ចប់ទំនិញរបស់ខ្ញុំ\n"
-                    . "/contact - ទំនាក់ទំនងក្រុមការងារ"
+                    . "/contact - ទំនាក់ទំនងក្រុមការងារ\n\n"
+                    . "អ្នកក៏អាចចុចប៊ូតុងក្នុងម៉ឺនុយខាងក្រោមបានដែរ។",
+                    $keyboard
                 );
-            } elseif ($command === '/track') {
+            } elseif ($command === '/track' || $text === $trackButton) {
                 $trackingNumber = trim($parts[1] ?? '');
 
                 if ($trackingNumber === '') {
@@ -104,18 +124,30 @@ class TelegramWebhookController extends Controller
                         $telegram
                     );
                 }
-            } elseif ($command === '/my_packages') {
-                $telegram->sendMessage(
-                    $chatId,
-                    "🔐 សូមភ្ជាប់ Telegram ជាមួយគណនីអតិថិជន "
-                    . "HFL ដោយសុវត្ថិភាពជាមុន។\n"
-                    . "មុខងារនេះមិនទាន់បង្ហាញកញ្ចប់តាមគណនីបានទេ។"
+            } elseif ($command === '/my_packages' || $text === $packagesButton) {
+                Cache::put(
+                    $cacheKey,
+                    true,
+                    now()->addMinutes(10)
                 );
-            } elseif ($command === '/contact') {
+
                 $telegram->sendMessage(
                     $chatId,
-                    "☎️ សូមទាក់ទងក្រុមការងារ HFL Logistics "
-                    . "តាមបណ្តាញផ្លូវការរបស់ក្រុមហ៊ុន។"
+                    "📦 ស្វែងរកកញ្ចប់ទំនិញរបស់អ្នក\n\n"
+                    . "សូមផ្ញើ Tracking Number ឬ HFL Package Code។\n"
+                    . "ឧទាហរណ៍៖ YC1000202930\n\n"
+                    . "ចំណាំ៖ បច្ចុប្បន្ន អ្នកអាចស្វែងរកតាមលេខកូដបាន។ "
+                    . "ការបង្ហាញកញ្ចប់ទាំងអស់តាមគណនីអតិថិជនមិនទាន់មានទេ។",
+                    $keyboard
+                );
+            } elseif ($command === '/contact' || $text === $contactButton) {
+                $telegram->sendMessage(
+                    $chatId,
+                    "☎️ ទំនាក់ទំនង HFL Logistics\n\n"
+                    . "សូមទាក់ទងតាមបណ្តាញផ្លូវការរបស់ HFL។\n"
+                    . "លេខទូរស័ព្ទ និងតំណ Telegram ផ្លូវការនឹងត្រូវបន្ថែម "
+                    . "នៅពេលអ្នកផ្តល់ព័ត៌មានត្រឹមត្រូវ។",
+                    $keyboard
                 );
             } elseif (!str_starts_with($text, '/')
                 && Cache::get($cacheKey)) {
