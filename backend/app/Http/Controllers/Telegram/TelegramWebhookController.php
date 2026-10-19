@@ -308,10 +308,6 @@ class TelegramWebhookController extends Controller
             $reply .= "🚢 Container: {$container->container_number}\n";
         }
 
-        if ($container?->shipment?->shipment_number) {
-            $reply .= "📄 Shipment: {$container->shipment->shipment_number}\n";
-        }
-
         if ($container?->estimated_arrival) {
             $reply .= "📅 ETA: "
                 . $container->estimated_arrival->format('d/m/Y')
