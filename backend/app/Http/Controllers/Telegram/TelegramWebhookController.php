@@ -149,8 +149,7 @@ class TelegramWebhookController extends Controller
                     . "នៅពេលអ្នកផ្តល់ព័ត៌មានត្រឹមត្រូវ។",
                     $keyboard
                 );
-            } elseif (!str_starts_with($text, '/')
-                && Cache::get($cacheKey)) {
+            } elseif (!str_starts_with($text, '/')) {
                 Cache::forget($cacheKey);
 
                 $this->sendTrackingResult(
