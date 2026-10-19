@@ -88,7 +88,7 @@ class TelegramWebhookController extends Controller
                     . "សូមជ្រើសរើសមុខងារខាងក្រោម ដើម្បីប្រើប្រាស់សេវាកម្ម HFL។";
 
                 $telegram->sendMessage($chatId, $reply, $keyboard);
-            } elseif ($command === '/help' || $text === $helpButton) {
+            } elseif ($command === '/help' || str_contains($text, 'ជំនួយ')) {
                 $telegram->sendMessage(
                     $chatId,
                     "📦 HFL Smart Logistics\n\n"
@@ -100,7 +100,7 @@ class TelegramWebhookController extends Controller
                     . "អ្នកក៏អាចចុចប៊ូតុងក្នុងម៉ឺនុយខាងក្រោមបានដែរ។",
                     $keyboard
                 );
-            } elseif ($command === '/track' || $text === $trackButton) {
+            } elseif ($command === '/track' || str_contains($text, 'តាមដានទំនិញ')) {
                 $trackingNumber = trim($parts[1] ?? '');
 
                 if ($trackingNumber === '') {
@@ -124,7 +124,7 @@ class TelegramWebhookController extends Controller
                         $telegram
                     );
                 }
-            } elseif ($command === '/my_packages' || $text === $packagesButton) {
+            } elseif ($command === '/my_packages' || str_contains($text, 'កញ្ចប់ទំនិញរបស់ខ្ញុំ')) {
                 Cache::put(
                     $cacheKey,
                     true,
@@ -140,7 +140,7 @@ class TelegramWebhookController extends Controller
                     . "ការបង្ហាញកញ្ចប់ទាំងអស់តាមគណនីអតិថិជនមិនទាន់មានទេ។",
                     $keyboard
                 );
-            } elseif ($command === '/contact' || $text === $contactButton) {
+            } elseif ($command === '/contact' || str_contains($text, 'ទំនាក់ទំនង HFL')) {
                 $telegram->sendMessage(
                     $chatId,
                     "☎️ ទំនាក់ទំនង HFL Logistics\n\n"
