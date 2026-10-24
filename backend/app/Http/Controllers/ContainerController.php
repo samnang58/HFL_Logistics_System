@@ -12,14 +12,14 @@ use Illuminate\Support\Facades\DB;
 class ContainerController extends ApiController
 {
     /**
-     * List containers
+     * List containers.
      */
     public function index(Request $request)
     {
         $query = Container::query()
             ->with([
                 'trackingEvents',
-                'packages',
+                'packages' => fn ($q) => $q->wherePivotNull('unloaded_at'),
                 'packages.customer',
             ]);
 
@@ -45,10 +45,14 @@ class ContainerController extends ApiController
                     '%' . $search . '%'
                 )
                 ->orWhereHas('packages', function ($packageQuery) use ($search) {
-                    $packageQuery->where('packages.tracking_number', 'like', '%' . $search . '%')
-                        ->orWhere('packages.china_waybill_number', 'like', '%' . $search . '%')
-                        ->orWhere('packages.hfl_package_code', 'like', '%' . $search . '%')
-                        ->orWhere('packages.package_id', 'like', '%' . $search . '%');
+                    $packageQuery
+                        ->wherePivotNull('unloaded_at')
+                        ->where(function ($q) use ($search) {
+                            $q->where('packages.tracking_number', 'like', '%' . $search . '%')
+                                ->orWhere('packages.china_waybill_number', 'like', '%' . $search . '%')
+                                ->orWhere('packages.hfl_package_code', 'like', '%' . $search . '%')
+                                ->orWhere('packages.package_id', 'like', '%' . $search . '%');
+                        });
                 });
             });
         }
@@ -69,16 +73,39 @@ class ContainerController extends ApiController
             ->orderByDesc('id')
             ->get();
 
-        // Container totals are derived from the packages actually linked to the
-        // container. Do not rely on denormalized/old container columns.
         $containers->each(function ($container) {
             $packages = $container->packages;
+
             $container->setAttribute('package_count', $packages->count());
-            $container->setAttribute('tracking_count', $packages->filter(fn ($p) => !empty($p->tracking_number) || !empty($p->china_waybill_number))->count());
-            $container->setAttribute('product_types', $packages->pluck('product_name')->filter()->unique()->count());
-            $container->setAttribute('total_quantity', (int) $packages->sum(fn ($p) => (int) ($p->quantity ?? 0)));
-            $container->setAttribute('total_cbm', round($packages->sum(fn ($p) => (float) ($p->total_cbm ?? 0)), 6));
-            $container->setAttribute('total_weight', round($packages->sum(fn ($p) => (float) ($p->total_weight ?? 0)), 3));
+            $container->setAttribute(
+                'tracking_count',
+                $packages->filter(
+                    fn ($p) => !empty($p->tracking_number)
+                        || !empty($p->china_waybill_number)
+                )->count()
+            );
+            $container->setAttribute(
+                'product_types',
+                $packages->pluck('product_name')->filter()->unique()->count()
+            );
+            $container->setAttribute(
+                'total_quantity',
+                (int) $packages->sum(fn ($p) => (int) ($p->quantity ?? 0))
+            );
+            $container->setAttribute(
+                'total_cbm',
+                round(
+                    $packages->sum(fn ($p) => (float) ($p->total_cbm ?? 0)),
+                    6
+                )
+            );
+            $container->setAttribute(
+                'total_weight',
+                round(
+                    $packages->sum(fn ($p) => (float) ($p->total_weight ?? 0)),
+                    3
+                )
+            );
         });
 
         return $this->ok(
@@ -88,7 +115,7 @@ class ContainerController extends ApiController
     }
 
     /**
-     * Create container
+     * Create container.
      */
     public function store(Request $request)
     {
@@ -99,78 +126,66 @@ class ContainerController extends ApiController
                 'max:255',
                 'unique:containers,container_number',
             ],
-
             'container_type' => [
                 'nullable',
                 'string',
                 'max:100',
             ],
-
             'seal_number' => [
                 'nullable',
                 'string',
                 'max:100',
             ],
-
             'shipment_id' => [
                 'nullable',
                 'integer',
                 'exists:shipments,id',
             ],
-
             'shipping_mode' => [
                 'nullable',
                 'string',
                 'max:100',
             ],
-
             'origin' => [
                 'nullable',
                 'string',
                 'max:255',
             ],
-
             'destination' => [
                 'nullable',
                 'string',
                 'max:255',
             ],
-
             'current_location' => [
                 'nullable',
                 'string',
                 'max:255',
             ],
-
             'status' => [
                 'nullable',
                 'string',
                 'max:100',
             ],
-
             'departure_date' => [
                 'nullable',
                 'date',
             ],
-
             'estimated_arrival' => [
                 'nullable',
                 'date',
             ],
-
             'actual_arrival' => [
                 'nullable',
                 'date',
             ],
-
             'notes' => [
                 'nullable',
                 'string',
             ],
         ]);
 
-        $data['status'] =
-            $data['status'] ?? 'Pending';
+        $data['status'] = $data['status']
+            ?? 'Received at China Warehouse';
 
         $container = Container::create($data);
 
@@ -184,25 +199,46 @@ class ContainerController extends ApiController
     }
 
     /**
-     * Show container details
+     * Show container details.
      */
     public function show($id)
     {
         $container = Container::with([
             'shipment',
             'trackingEvents.createdBy:id,name,email,role',
-            'packages.customer',
+            'packages' => fn ($q) => $q
+                ->wherePivotNull('unloaded_at')
+                ->with('customer'),
             'packages.containers',
         ])->findOrFail($id);
 
         $packages = $container->packages;
+
         $container->setAttribute('package_count', $packages->count());
-        $container->setAttribute('total_cbm', round($packages->sum(fn ($p) => (float) ($p->total_cbm ?? 0)), 6));
-        $container->setAttribute('total_weight', round($packages->sum(fn ($p) => (float) ($p->total_weight ?? 0)), 3));
-        $container->setAttribute('loaded_package_count', $packages->filter(fn ($p) => !empty($p->pivot?->loaded_at))->count());
-        $container->setAttribute('unloaded_package_count', $packages->filter(fn ($p) => !empty($p->pivot?->unloaded_at))->count());
-        $container->setAttribute('product_types', $packages->pluck('product_name')->filter()->unique()->count());
-        $container->setAttribute('total_quantity', (int) $packages->sum(fn ($p) => (int) ($p->quantity ?? 0)));
+        $container->setAttribute(
+            'total_cbm',
+            round($packages->sum(fn ($p) => (float) ($p->total_cbm ?? 0)), 6)
+        );
+        $container->setAttribute(
+            'total_weight',
+            round($packages->sum(fn ($p) => (float) ($p->total_weight ?? 0)), 3)
+        );
+        $container->setAttribute(
+            'loaded_package_count',
+            $packages->filter(fn ($p) => !empty($p->pivot?->loaded_at))->count()
+        );
+        $container->setAttribute(
+            'unloaded_package_count',
+            $packages->filter(fn ($p) => !empty($p->pivot?->unloaded_at))->count()
+        );
+        $container->setAttribute(
+            'product_types',
+            $packages->pluck('product_name')->filter()->unique()->count()
+        );
+        $container->setAttribute(
+            'total_quantity',
+            (int) $packages->sum(fn ($p) => (int) ($p->quantity ?? 0))
+        );
 
         return $this->ok(
             $container,
@@ -211,16 +247,12 @@ class ContainerController extends ApiController
     }
 
     /**
-     * Update container
+     * Update container details.
      */
-    public function update(
-        Request $request,
-        $id
-    ) {
+    public function update(Request $request, $id)
+    {
         $container = Container::findOrFail($id);
 
-        // Status changes must go through /transition so Container, Package,
-        // Shipment and tracking events remain synchronized.
         if ($request->has('status')) {
             return response()->json([
                 'message' => 'Container status cannot be changed through the generic update endpoint. Use POST /containers/{id}/transition.',
@@ -232,83 +264,65 @@ class ContainerController extends ApiController
                 'sometimes',
                 'string',
                 'max:255',
-                'unique:containers,container_number,' .
-                    $container->id,
+                'unique:containers,container_number,' . $container->id,
             ],
-
             'container_type' => [
                 'sometimes',
                 'nullable',
                 'string',
                 'max:100',
             ],
-
             'seal_number' => [
                 'sometimes',
                 'nullable',
                 'string',
                 'max:100',
             ],
-
             'shipment_id' => [
                 'sometimes',
                 'nullable',
                 'integer',
                 'exists:shipments,id',
             ],
-
             'shipping_mode' => [
                 'sometimes',
                 'nullable',
                 'string',
                 'max:100',
             ],
-
             'origin' => [
                 'sometimes',
                 'nullable',
                 'string',
                 'max:255',
             ],
-
             'destination' => [
                 'sometimes',
                 'nullable',
                 'string',
                 'max:255',
             ],
-
             'current_location' => [
                 'sometimes',
                 'nullable',
                 'string',
                 'max:255',
             ],
-
-            'status' => [
-                'sometimes',
-                'string',
-                'max:100',
-            ],
-
             'departure_date' => [
                 'sometimes',
                 'nullable',
                 'date',
             ],
-
             'estimated_arrival' => [
                 'sometimes',
                 'nullable',
                 'date',
             ],
-
             'actual_arrival' => [
                 'sometimes',
                 'nullable',
                 'date',
             ],
-
             'notes' => [
                 'sometimes',
                 'nullable',
@@ -328,12 +342,11 @@ class ContainerController extends ApiController
     }
 
     /**
-     * Delete container
+     * Delete container.
      */
     public function destroy($id)
     {
-        $container =
-            Container::findOrFail($id);
+        $container = Container::findOrFail($id);
 
         $container->delete();
 
@@ -344,57 +357,126 @@ class ContainerController extends ApiController
     }
 
     /**
-     * Move the container through the operational China -> Cambodia lifecycle.
-     * This is intentionally stricter than a generic update so the movement is
-     * auditable and the child packages + parent shipment stay synchronized.
+     * Transition container movement and synchronize supported records.
      */
     public function transition(Request $request, $id)
     {
-        $container = Container::with(['packages', 'shipment'])->findOrFail($id);
+        $container = Container::with([
+            'packages',
+            'shipment',
+        ])->findOrFail($id);
 
         $data = $request->validate([
-            'status' => ['required', 'in:Pending,Loading,Departed China,In Transit,Cambodia Port,Customs,Cambodia Warehouse,Received,Delivered'],
-            'location' => ['required', 'string', 'max:255'],
-            'event_date' => ['nullable', 'date'],
-            'remarks' => ['nullable', 'string'],
+            'status' => [
+                'required',
+                'in:Received at China Warehouse,The Container Finish,Customs declaration in progress,Under inspection,Customs Clearance cleared,Cambodia Warehouse,Delivered,Received',
+            ],
+            'location' => [
+                'required',
+                'string',
+                'max:255',
+            ],
+            'event_date' => [
+                'nullable',
+                'date',
+            ],
+            'remarks' => [
+                'nullable',
+                'string',
+            ],
         ]);
-
-        $flow = [
-            'Pending' => 0,
-            'Loading' => 1,
-            'Departed China' => 2,
-            'In Transit' => 3,
-            'Cambodia Port' => 4,
-            'Customs' => 5,
-            'Cambodia Warehouse' => 6,
-            'Received' => 7,
-            'Delivered' => 8,
+                /*
+         * Prevent container movement from going backwards.
+         * "Received" is handled separately and never changes package receipt.
+         */
+        $containerFlow = [
+            'Received at China Warehouse',
+            'The Container Finish',
+            'Customs declaration in progress',
+            'Under inspection',
+            'Customs Clearance cleared',
+            'Cambodia Warehouse',
+            'Delivered',
         ];
 
-        return DB::transaction(function () use ($container, $data, $flow, $request) {
-            $current = $container->status ?: 'Pending';
-            if (!array_key_exists($current, $flow)) {
-                $current = 'Pending';
-            }
-            // Container Movement is the operational source of truth. Allow
-            // an authorized correction to an already-recorded movement (for
-            // example a test record incorrectly marked Delivered) so the
-            // actual physical state can be corrected. The correction is kept
-            // as a new auditable tracking event; package lifecycle fields are
-            // still protected from backwards overwrites below.
+        $currentContainerStatus = (string) $container->status;
+        $requestedContainerStatus = (string) $data['status'];
 
+        // Do not allow a completed container to return to an earlier stage.
+        if (
+            $currentContainerStatus === 'Received'
+            && $requestedContainerStatus !== 'Received'
+        ) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'status' => [
+                    'A container marked Received cannot return to an earlier status.',
+                ],
+            ]);
+        }
+
+        // Received is a separate terminal status; do not treat it as normal movement.
+        if (
+            $requestedContainerStatus === 'Received'
+            && !in_array($currentContainerStatus, [
+                'Delivered',
+                'Received',
+            ], true)
+        ) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'status' => [
+                    'Mark the container Delivered before setting it to Received.',
+                ],
+            ]);
+        }
+
+        $currentContainerRank = array_search(
+            $currentContainerStatus,
+            $containerFlow,
+            true
+        );
+
+        $requestedContainerRank = array_search(
+            $requestedContainerStatus,
+            $containerFlow,
+            true
+        );
+
+        if (
+            $currentContainerRank !== false
+            && $requestedContainerRank !== false
+            && $requestedContainerRank < $currentContainerRank
+        ) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'status' => [
+                    'Container status cannot move backwards. Current status: '
+                    . $currentContainerStatus
+                    . '; requested status: '
+                    . $requestedContainerStatus
+                    . '.',
+                ],
+            ]);
+        }
+        return DB::transaction(function () use ($container, $data, $request) {
             $eventDate = $data['event_date'] ?? now();
-            $container->update([
+
+            /*
+             * 1. Update container movement.
+             */
+            $containerUpdates = [
                 'status' => $data['status'],
                 'current_location' => $data['location'],
-                'departure_date' => $data['status'] === 'Departed China'
-                    ? ($container->departure_date ?: now()->toDateString())
-                    : $container->departure_date,
-                'actual_arrival' => $data['status'] === 'Cambodia Warehouse'
-                    ? ($container->actual_arrival ?: now()->toDateString())
-                    : $container->actual_arrival,
-            ]);
+            ];
 
+            if ($data['status'] === 'Cambodia Warehouse') {
+                $containerUpdates['actual_arrival'] =
+                    $container->actual_arrival ?: now()->toDateString();
+            }
+
+            $container->update($containerUpdates);
+
+            /*
+             * 2. Record the container timeline event.
+             */
             $container->trackingEvents()->create([
                 'location' => $data['location'],
                 'status' => $data['status'],
@@ -403,54 +485,68 @@ class ContainerController extends ApiController
                 'created_by' => $request->user()?->id,
             ]);
 
-            // Container movement controls transport/arrival stages only.
-            // It must never move a package backwards after warehouse measurement,
-            // billing, payment, delivery, or customer receipt.
-            // Last-mile Delivered is controlled by DeliveryController + POD.
+            /*
+             * 3. Synchronize package transport status only.
+             *
+             * Never automatically change a package to Customer Received.
+             * Never overwrite later package workflow stages.
+             */
             $packageStatus = match ($data['status']) {
-                'Loading' => 'Loading',
-                'Departed China' => 'Departed China',
-                'In Transit' => 'In Transit',
-                'Cambodia Port', 'Customs' => 'Arrived Cambodia',
+                'Received at China Warehouse' => 'Received at China Warehouse',
+                'The Container Finish' => 'Loading',
+                'Customs declaration in progress',
+                'Under inspection' => 'Customs',
+                'Customs Clearance cleared' => 'Cambodia Port',
                 'Cambodia Warehouse' => 'Cambodia Warehouse',
-                'Received' => 'Cambodia Warehouse',
-                'Delivered' => null,
+                'Delivered', 'Received' => null,
                 default => null,
             };
 
-            $transportStatuses = [
+            $packageTransportRanks = [
                 'Received at China Warehouse' => 0,
-                'Loading' => 1,
-                'Departed China' => 2,
-                'In Transit' => 3,
-                'Cambodia Port' => 4,
-                'Customs' => 5,
-                'Arrived Cambodia' => 6,
-                'Cambodia Warehouse' => 7,
+                'Waiting Shipment' => 1,
+                'Loading' => 2,
+                'Departed China' => 3,
+                'In Transit' => 4,
+                'Cambodia Port' => 5,
+                'Customs' => 6,
+                'Arrived Cambodia' => 7,
+                'Cambodia Warehouse' => 8,
             ];
 
-            if ($packageStatus) {
-                foreach ($container->packages as $package) {
-                    $currentPackageStatus = (string) ($package->status ?? '');
-                    $currentRank = $transportStatuses[$currentPackageStatus] ?? null;
-                    $targetRank = $transportStatuses[$packageStatus] ?? null;
+            if ($packageStatus !== null) {
+                $targetRank = $packageTransportRanks[$packageStatus] ?? null;
 
-                    // Once the package has left the transport lifecycle, the
-                    // container is no longer allowed to overwrite its status.
-                    if ($currentRank === null || $targetRank === null || $targetRank < $currentRank) {
+                foreach ($container->packages as $package) {
+                    $currentStatus = (string) ($package->status ?? '');
+                    $currentRank = $packageTransportRanks[$currentStatus] ?? null;
+
+                    if (
+                        $currentRank === null
+                        || $targetRank === null
+                        || $targetRank < $currentRank
+                    ) {
                         continue;
                     }
 
-                    $sameState = $currentPackageStatus === $packageStatus
-                        && (string) ($package->warehouse_location ?? '') === (string) $data['location'];
+                    $sameState =
+                        $currentStatus === $packageStatus
+                        && (
+                            $data['status'] !== 'Cambodia Warehouse'
+                            || (string) ($package->warehouse_location ?? '')
+                                === (string) $data['location']
+                        );
 
-                    $package->update([
+                    $packageUpdates = [
                         'status' => $packageStatus,
-                        'warehouse_location' => $data['location'],
-                    ]);
+                    ];
 
-                    // Do not create duplicate timeline entries when the same
-                    // container state is saved repeatedly.
+                    if ($data['status'] === 'Cambodia Warehouse') {
+                        $packageUpdates['warehouse_location'] = $data['location'];
+                    }
+
+                    $package->update($packageUpdates);
+
                     if (!$sameState) {
                         TrackingEvent::create([
                             'tracking_number' => $package->tracking_number,
@@ -459,23 +555,24 @@ class ContainerController extends ApiController
                             'location' => $data['location'],
                             'warehouse' => $data['location'],
                             'staff_name' => $request->user()?->name ?? 'Operations',
-                            'note' => $data['remarks'] ?? 'Container status transitioned',
+                            'note' => $data['remarks']
+                                ?? 'Container status transitioned',
                             'event_at' => $eventDate,
                         ]);
                     }
                 }
             }
 
-            // The container is the single source of truth for transport
-            // location. Even when the package lifecycle has already reached
-            // Cambodia Warehouse, a Container movement to Received/Delivered
-            // must update the package's visible warehouse location so Tracking
-            // never shows the old China warehouse location. Package status is
-            // intentionally not changed here because billing/delivery have
-            // their own lifecycle.
-            if (in_array($data['status'], ['Cambodia Warehouse', 'Received', 'Delivered'], true)) {
+            /*
+             * 4. Keep warehouse location synchronized without changing
+             * package status or customer receipt.
+             */
+            if ($data['status'] === 'Cambodia Warehouse') {
                 foreach ($container->packages as $package) {
-                    if ((string) ($package->warehouse_location ?? '') !== (string) $data['location']) {
+                    if (
+                        (string) ($package->warehouse_location ?? '')
+                        !== (string) $data['location']
+                    ) {
                         $package->update([
                             'warehouse_location' => $data['location'],
                         ]);
@@ -483,52 +580,108 @@ class ContainerController extends ApiController
                 }
             }
 
+            /*
+             * 5. Synchronize Shipment using the existing Shipment FLOW.
+             *
+             * ShipmentController::FLOW:
+             * Preparing -> Loading -> Departed China -> In Transit
+             * -> Cambodia Port -> Customs -> Cambodia Warehouse -> Completed
+             *
+             * Container-only statuses must never be saved as Shipment statuses.
+             * Received must not change Shipment status.
+             */
             if ($container->shipment) {
                 $shipmentStatus = match ($data['status']) {
-                    'Loading' => 'Loading',
-                    'Departed China' => 'Departed China',
-                    'In Transit' => 'In Transit',
-                    'Cambodia Port' => 'Cambodia Port',
-                    'Customs' => 'Customs',
+                    'Received at China Warehouse' => 'Preparing',
+                    'The Container Finish' => 'Loading',
+                    'Customs declaration in progress',
+                    'Under inspection' => 'Customs',
+                    'Customs Clearance cleared' => 'Cambodia Port',
                     'Cambodia Warehouse' => 'Cambodia Warehouse',
-                    'Received' => 'Cambodia Warehouse',
                     'Delivered' => 'Completed',
-                    default => $data['status'],
+                    'Received' => null,
+                    default => null,
                 };
 
-                $container->shipment->update([
-                    'status' => $shipmentStatus,
-                    'actual_arrival' => in_array($shipmentStatus, ['Cambodia Warehouse', 'Completed'], true)
-                        ? ($container->shipment->actual_arrival ?: now()->toDateString())
-                        : $container->shipment->actual_arrival,
-                ]);
+                if ($shipmentStatus !== null) {
+                    $shipmentFlow = ShipmentController::FLOW;
 
-                ShipmentTrackingEvent::create([
-                    'shipment_id' => $container->shipment->id,
-                    'location' => $data['location'],
-                    'status' => $shipmentStatus,
-                    'event_date' => $eventDate,
-                    'remarks' => $data['remarks'] ?? 'Container lifecycle transition',
-                    'created_by' => $request->user()?->id,
-                ]);
+                    $currentShipmentRank = array_search(
+                        $container->shipment->status,
+                        $shipmentFlow,
+                        true
+                    );
+
+                    $targetShipmentRank = array_search(
+                        $shipmentStatus,
+                        $shipmentFlow,
+                        true
+                    );
+
+                    /*
+                     * Advance only when the mapped status is later in FLOW.
+                     * Unknown statuses and backward transitions are ignored.
+                     * Equal statuses do not create duplicate events.
+                     */
+                    if (
+                        $currentShipmentRank !== false
+                        && $targetShipmentRank !== false
+                        && $targetShipmentRank > $currentShipmentRank
+                    ) {
+                        $shipmentUpdates = [
+                            'status' => $shipmentStatus,
+                        ];
+
+                        if (in_array(
+                            $shipmentStatus,
+                            ['Cambodia Warehouse', 'Completed'],
+                            true
+                        )) {
+                            $shipmentUpdates['actual_arrival'] =
+                                $container->shipment->actual_arrival
+                                ?: now()->toDateString();
+                        }
+
+                        $container->shipment->update($shipmentUpdates);
+
+                        ShipmentTrackingEvent::create([
+                            'shipment_id' => $container->shipment->id,
+                            'location' => $data['location'],
+                            'status' => $shipmentStatus,
+                            'event_date' => $eventDate,
+                            'remarks' => $data['remarks']
+                                ?? 'Container lifecycle transition',
+                            'created_by' => $request->user()?->id,
+                        ]);
+                    }
+                }
             }
 
             return $this->ok(
-                $container->fresh()->load(['shipment', 'packages', 'trackingEvents.createdBy:id,name,email,role']),
+                $container->fresh()->load([
+                    'shipment',
+                    'packages',
+                    'trackingEvents.createdBy:id,name,email,role',
+                ]),
                 'Container transition completed successfully'
             );
         });
     }
 
     /**
-     * Attach packages to container
+     * Attach packages to a container.
      */
-    public function attachPackages(
-        Request $request,
-        $id
-    ) {
-        $container =
-            Container::findOrFail($id);
+    public function attachPackages(Request $request, $id)
+    {
+        $container = Container::findOrFail($id);
+
+        if ($container->status !== 'Received at China Warehouse') {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'container' => [
+                    'Packages can only be attached while the container is Received at China Warehouse.',
+                ],
+            ]);
+        }
 
         $data = $request->validate([
             'package_ids' => [
@@ -536,25 +689,15 @@ class ContainerController extends ApiController
                 'array',
                 'min:1',
             ],
-
             'package_ids.*' => [
                 'integer',
                 'exists:packages,id',
             ],
         ]);
 
-        DB::transaction(function () use (
-            $container,
-            $data
-        ) {
-            foreach (
-                $data['package_ids']
-                as $packageId
-            ) {
-                $package =
-                    Package::findOrFail(
-                        $packageId
-                    );
+        DB::transaction(function () use ($container, $data) {
+            foreach ($data['package_ids'] as $packageId) {
+                $package = Package::findOrFail($packageId);
 
                 $loadableStatuses = [
                     'Received at China Warehouse',
@@ -566,13 +709,25 @@ class ContainerController extends ApiController
 
                 if (!in_array($package->status, $loadableStatuses, true)) {
                     throw \Illuminate\Validation\ValidationException::withMessages([
-                        'package_ids' => ["Package {$package->package_id} cannot be loaded because it is already at workflow stage {$package->status}."],
+                        'package_ids' => [
+                            "Package {$package->package_id} cannot be loaded because it is already at workflow stage {$package->status}.",
+                        ],
                     ]);
                 }
 
-                $existingContainer = $package->containers()
-                    ->whereKey($container->id)
+                $hasUnloadedHistory = $container->packages()
+                    ->where('packages.id', $package->id)
+                    ->wherePivotNotNull('unloaded_at')
                     ->exists();
+
+                if ($hasUnloadedHistory) {
+                    throw \Illuminate\Validation\ValidationException::withMessages([
+                        'package_ids' => [
+                            "Package {$package->package_id} was previously removed from this container. Use a new container to preserve its loading history.",
+                        ],
+                    ]);
+                }
+
                 $otherContainer = $package->containers()
                     ->where('containers.id', '!=', $container->id)
                     ->wherePivotNull('unloaded_at')
@@ -580,24 +735,40 @@ class ContainerController extends ApiController
 
                 if ($otherContainer) {
                     throw \Illuminate\Validation\ValidationException::withMessages([
-                        'package_ids' => ["Package {$package->package_id} is already loaded in another active container."],
+                        'package_ids' => [
+                            "Package {$package->package_id} is already loaded in another active container.",
+                        ],
                     ]);
                 }
 
-                $container->packages()->syncWithoutDetaching([
-                    $package->id => [
-                        'loaded_at' => now(),
-                    ],
-                ]);
+               $alreadyAttached = $container->packages()
+                    ->where('packages.id', $package->id)
+                    ->wherePivotNull('unloaded_at')
+                    ->exists();
 
-                if (in_array($package->status, ['Received at China Warehouse', 'Waiting Shipment'], true)) {
-                    $package->update(['status' => 'Loading']);
+                if (!$alreadyAttached) {
+                    $container->packages()->attach($package->id, [
+                        'loaded_at' => now(),
+                    ]);
+                }
+                if (in_array(
+                    $package->status,
+                    ['Received at China Warehouse', 'Waiting Shipment'],
+                    true
+                )) {
+                    $package->update([
+                        'status' => 'Loading',
+                    ]);
+
                     TrackingEvent::create([
                         'tracking_number' => $package->tracking_number,
                         'package_id' => $package->id,
                         'status' => 'Loading',
-                        'location' => $container->current_location ?: $container->origin ?: 'China Warehouse',
-                        'warehouse' => $container->current_location ?: $container->origin,
+                        'location' => $container->current_location
+                            ?: $container->origin
+                            ?: 'China Warehouse',
+                        'warehouse' => $container->current_location
+                            ?: $container->origin,
                         'staff_name' => auth()->user()?->name ?? 'Warehouse',
                         'note' => 'Package loaded into container',
                         'event_at' => now(),
@@ -615,18 +786,26 @@ class ContainerController extends ApiController
     }
 
     /**
-     * Remove package from container
+     * Remove package from container.
      */
-    public function detachPackage(
-        $id,
-        $packageId
-    ) {
-        $container =
-            Container::findOrFail($id);
+    public function detachPackage($id, $packageId)
+    {
+        $container = Container::findOrFail($id);
 
-        $container
-            ->packages()
-            ->detach($packageId);
+        $packageLink = $container->packages()
+            ->where('packages.id', $packageId)
+            ->wherePivotNull('unloaded_at')
+            ->first();
+
+        if (!$packageLink) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'package_id' => ['This package is not actively attached to this container.'],
+            ]);
+        }
+
+        $container->packages()->updateExistingPivot($packageId, [
+            'unloaded_at' => now(),
+        ]);
 
         return $this->ok(
             null,
@@ -635,25 +814,22 @@ class ContainerController extends ApiController
     }
 
     /**
-     * Update container location/status
-     * and create timeline event
+     * Backward-compatible endpoint for container movement.
      */
     public function updateLocation(Request $request, $id)
     {
-        // Backward-compatible endpoint: all operational movement is delegated
-        // to the same controlled lifecycle used by the transition endpoint.
         return $this->transition($request, $id);
     }
 
     /**
-     * Get packages inside container
+     * Get packages inside a container.
      */
     public function packages($id)
     {
-        $container =
-            Container::findOrFail($id);
+        $container = Container::findOrFail($id);
 
         $packages = $container->packages()
+            ->wherePivotNull('unloaded_at')
             ->with('customer')
             ->orderByDesc('container_packages.id')
             ->get();
@@ -662,28 +838,39 @@ class ContainerController extends ApiController
             'items' => $packages,
             'summary' => [
                 'package_count' => $packages->count(),
-                'tracking_count' => $packages->whereNotNull('tracking_number')->count(),
-                'product_types' => $packages->pluck('product_name')->filter()->unique()->count(),
-                'total_quantity' => (int) $packages->sum(fn ($p) => (int) ($p->quantity ?? 0)),
-                'total_cbm' => round($packages->sum(fn ($p) => (float) ($p->total_cbm ?? 0)), 6),
-                'total_weight' => round($packages->sum(fn ($p) => (float) ($p->total_weight ?? 0)), 3),
+                'tracking_count' => $packages
+                    ->whereNotNull('tracking_number')
+                    ->count(),
+                'product_types' => $packages
+                    ->pluck('product_name')
+                    ->filter()
+                    ->unique()
+                    ->count(),
+                'total_quantity' => (int) $packages->sum(
+                    fn ($p) => (int) ($p->quantity ?? 0)
+                ),
+                'total_cbm' => round(
+                    $packages->sum(fn ($p) => (float) ($p->total_cbm ?? 0)),
+                    6
+                ),
+                'total_weight' => round(
+                    $packages->sum(fn ($p) => (float) ($p->total_weight ?? 0)),
+                    3
+                ),
             ],
         ], 'Container packages retrieved successfully');
     }
 
     /**
-     * Get container timeline
+     * Get container timeline.
      */
     public function timeline($id)
     {
-        $container =
-            Container::findOrFail($id);
+        $container = Container::findOrFail($id);
 
         return $this->ok(
             $container->trackingEvents()
-                ->with(
-                    'createdBy:id,name,email,role'
-                )
+                ->with('createdBy:id,name,email,role')
                 ->get(),
             'Container timeline retrieved successfully'
         );

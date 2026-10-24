@@ -235,16 +235,27 @@ class TrackingController extends ApiController
             : collect();
 
         $latestContainerEvent = $containerEvents->last();
-        $transportStatuses = [
-            'Pending',
+       $containerStatuses = [
+            'Received at China Warehouse',
+            'The Container Finish',
+            'Customs declaration in progress',
+            'Under inspection',
+            'Customs Clearance cleared',
+            'Cambodia Warehouse',
+            'Delivered',
+            'Received',
+        ];
+
+        $packageTransportStatuses = [
+            'Received at China Warehouse',
+            'Waiting Shipment',
             'Loading',
             'Departed China',
             'In Transit',
             'Cambodia Port',
             'Customs',
+            'Arrived Cambodia',
             'Cambodia Warehouse',
-            'Received',
-            'Delivered',
         ];
 
         $containerEventKeys = $containerEvents->map(function ($event) {
@@ -255,7 +266,7 @@ class TrackingController extends ApiController
             ]);
         })->flip();
 
-        $postContainerPackageEvents = $packageEvents->filter(function ($event) use ($containerEvents, $transportStatuses) {
+        $postContainerPackageEvents = $packageEvents->filter(function ($event) use ($containerEvents) {
             if ($containerEvents->isEmpty() || !$containerEvents->last()->event_date || !$event->event_at) {
                 return true;
             }
@@ -318,8 +329,12 @@ class TrackingController extends ApiController
         // These fields are consumed by 06. Tracking so its summary always
         // reflects the latest movement from 04. Containers.
         $latestPackageTransportEvent = $packageEvents
-            ->filter(function ($event) use ($transportStatuses) {
-                return in_array((string) $event->status, $transportStatuses, true);
+            ->filter(function ($event) use ($packageTransportStatuses) {
+                return in_array(
+                    (string) $event->status,
+                    $packageTransportStatuses,
+                    true
+                );
             })
             ->last();
 
@@ -342,14 +357,60 @@ class TrackingController extends ApiController
         $package->setAttribute('container_status', $containerStatus);
         $package->setAttribute('container_current_location', $containerLocation);
         $package->setAttribute('container_updated_at', $containerUpdatedAt?->toISOString());
-        $package->setAttribute(
-            'tracking_status',
-            $packageMovementIsLatest ? $latestPackageTransportEvent->status : ($containerStatus ?: $package->status)
-        );
-        $package->setAttribute(
-            'tracking_location',
-            $packageMovementIsLatest ? $latestPackageTransportEvent->location : ($containerLocation ?: $package->warehouse_location)
-        );
+        $containerTrackingStatusMap = [
+            'Received at China Warehouse' => 'Received at China Warehouse',
+            'The Container Finish' => 'Loading',
+            'Customs declaration in progress' => 'Customs',
+            'Under inspection' => 'Customs',
+            'Customs Clearance cleared' => 'Cambodia Port',
+            'Cambodia Warehouse' => 'Cambodia Warehouse',
+            'Delivered' => 'Delivered',
+        ];
+
+
+        $effectiveContainerTrackingStatus = null;
+        $effectiveContainerTrackingLocation = null;
+
+        foreach ($containerEvents->reverse() as $event) {
+            if ($event->status === 'Received') {
+                continue;
+            }
+
+            if (isset($containerTrackingStatusMap[$event->status])) {
+                $effectiveContainerTrackingStatus =
+                    $containerTrackingStatusMap[$event->status];
+
+                $effectiveContainerTrackingLocation = $event->location;
+                break;
+            }
+        }
+
+        $trackingStatus = $packageMovementIsLatest
+            ? $latestPackageTransportEvent->status
+            : (
+                $containerStatus === 'Received'
+                    ? ($effectiveContainerTrackingStatus ?: $package->status)
+                    : ($containerTrackingStatusMap[$containerStatus] ?? $package->status)
+            );
+
+        $package->setAttribute('tracking_status', $trackingStatus);
+
+        $trackingLocation = $packageMovementIsLatest
+            ? $latestPackageTransportEvent->location
+            : (
+                $containerStatus === 'Received'
+                    ? (
+                        $effectiveContainerTrackingLocation
+                        ?: $package->warehouse_location
+                    )
+                    : (
+                        $containerLocation
+                        ?: $package->warehouse_location
+                    )
+            );
+
+        $package->setAttribute('tracking_location', $trackingLocation);
+
 
         return $this->ok([
             'package' => $package,

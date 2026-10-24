@@ -11,8 +11,19 @@ import {
 import { listPackages, confirmCustomerPickup, updatePackageMovement } from "../services/packageApiService.js";
 import { formatHflDateTime, formatHflDate } from "../utils/dateTime.js";
 
-const STATUS_OPTIONS=["Pending","Loading","Departed China","In Transit","Cambodia Port","Customs","Cambodia Warehouse","Received","Delivered"];
-const EMPTY_FORM={container_number:"",container_type:"40HQ",seal_number:"",shipping_mode:"SEA",origin:"Guangzhou",destination:"Phnom Penh",current_location:"",status:"Pending",departure_date:"",estimated_arrival:"",notes:""};
+
+const STATUS_OPTIONS = [
+  "Received at China Warehouse",
+  "The Container Finish",
+  "Customs declaration in progress",
+  "Under inspection",
+  "Customs Clearance cleared",
+  "Cambodia Warehouse",
+  "Delivered",
+  "Received",
+];
+
+const EMPTY_FORM={container_number:"",container_type:"40HQ",seal_number:"",shipping_mode:"SEA",origin:"Guangzhou",destination:"Phnom Penh",current_location:"",status:"Received at China Warehouse",departure_date:"",estimated_arrival:"",notes:""};
 const fmt=(v,datetime=false)=>datetime?formatHflDateTime(v):formatHflDate(v);
 const num=(v,d=2)=>Number(v||0).toLocaleString("en-US",{maximumFractionDigits:d});
 const statusTone=(s)=>{const x=String(s||"").toLowerCase();if(x.includes("delivered"))return "emerald";if(x.includes("received"))return "emerald";if(x.includes("transit"))return "blue";if(x.includes("custom"))return "amber";if(x.includes("arrived"))return "violet";if(x.includes("loading"))return "cyan";return "slate";};
@@ -30,7 +41,7 @@ export default function ContainerManagement(){
  useEffect(()=>{load()},[status]);
  const filtered=useMemo(()=>{const q=search.trim().toLowerCase();if(!q)return containers;return containers.filter(c=>[c.container_number,c.seal_number,c.current_location,c.shipment_id,c.origin,c.destination,...(c.packages||[]).flatMap(p=>[p.package_id,p.tracking_number,p.china_waybill_number,p.hfl_package_code,p.customer_name])].some(v=>String(v??"").toLowerCase().includes(q)))},[containers,search]);
  const summary=useMemo(()=>({containers:containers.length,packages:containers.reduce((a,c)=>a+(c.package_count??c.packages?.length??0),0),productTypes:containers.reduce((a,c)=>a+Number(c.product_types||0),0),quantity:containers.reduce((a,c)=>a+Number(c.total_quantity||0),0),cbm:containers.reduce((a,c)=>a+Number(c.total_cbm||0),0),weight:containers.reduce((a,c)=>a+Number(c.total_weight||0),0),transit:containers.filter(c=>String(c.status).toLowerCase()==="in transit").length}),[containers]);
- async function open(id){try{setDetailLoading(true);setError("");setTab("overview");const d=await getContainer(id);setSelected(d);setLocationForm({location:d?.current_location||"",status:d?.status||"In Transit",event_date:"",remarks:""});const [tl,pk]=await Promise.all([getContainerTimeline(id),getContainerPackages(id)]);setTimeline(tl||[]);setPackageItems(pk||[]);}catch(e){setError(e?.message||"Failed to load container details.")}finally{setDetailLoading(false)}}
+ async function open(id){try{setDetailLoading(true);setError("");setTab("overview");const d=await getContainer(id);setSelected(d);setLocationForm({location:d?.current_location||"",status:d?.status||"Received at China Warehouse",event_date:"",remarks:""});const [tl,pk]=await Promise.all([getContainerTimeline(id),getContainerPackages(id)]);setTimeline(tl||[]);setPackageItems(pk||[]);}catch(e){setError(e?.message||"Failed to load container details.")}finally{setDetailLoading(false)}}
  async function openSearchResult(c){
   const q=search.trim().toLowerCase();
   if(!q){open(c.id);return;}
@@ -43,7 +54,7 @@ export default function ContainerManagement(){
    setDetailLoading(true);setError("");setTab("packages");
    const d=await getContainer(c.id);
    const [tl,pk]=await Promise.all([getContainerTimeline(c.id),getContainerPackages(c.id)]);
-   setSelected(d);setLocationForm({location:d?.current_location||"",status:d?.status||"In Transit",event_date:"",remarks:""});
+   setSelected(d);setLocationForm({location:d?.current_location||"",status:d?.status||"Received at China Warehouse",event_date:"",remarks:""});
    setTimeline(tl||[]);setPackageItems(pk||[]);
    const target=(pk||[]).find(p=>packageFields(p).some(v=>String(v??"").toLowerCase().includes(q)))||preview;
    setMovementPackage(target);
@@ -158,7 +169,8 @@ export default function ContainerManagement(){
       onChange={e=>setLocationForm({...locationForm,location:e.target.value})}
     />
   )}
-</Field><Field label="Status"><select value={locationForm.status} onChange={e=>setLocationForm({...locationForm,status:e.target.value,location:e.target.value==='Received'?'Cambodia Warehouse':locationForm.location})}>{STATUS_OPTIONS.map(x=><option key={x}>{x}</option>)}</select></Field>{locationForm.status==="Received"&&<div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-xs text-emerald-700"><strong>Received:</strong> confirms the container was checked and physically received at the Cambodia Warehouse.</div>}<Field label="Event Date"><input type="datetime-local" value={locationForm.event_date} onChange={e=>setLocationForm({...locationForm,event_date:e.target.value})}/></Field><Field label="Remarks"><textarea rows="3" value={locationForm.remarks} onChange={e=>setLocationForm({...locationForm,remarks:e.target.value})}/></Field><div className="flex justify-end"><button disabled={saving} className="rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white">{saving?"Saving...":"Save Movement"}</button></div></form></Modal>}
+</Field><Field label="Status"><select value={locationForm.status}
+onChange={e=>setLocationForm({...locationForm,status:e.target.value})}>{STATUS_OPTIONS.map(x=><option key={x}>{x}</option>)}</select></Field>{locationForm.status==="Received"&&<div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-xs text-emerald-700"><strong>Received:</strong> បញ្ជាក់ថាអតិថិជនបានទទួលទំនិញ។ វាមិនកំណត់ Package ទៅជា Customer Received ដោយស្វ័យប្រវត្តិទេ។</div>}<Field label="Event Date"><input type="datetime-local" value={locationForm.event_date} onChange={e=>setLocationForm({...locationForm,event_date:e.target.value})}/></Field><Field label="Remarks"><textarea rows="3" value={locationForm.remarks} onChange={e=>setLocationForm({...locationForm,remarks:e.target.value})}/></Field><div className="flex justify-end"><button disabled={saving} className="rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white">{saving?"Saving...":"Save Movement"}</button></div></form></Modal>}
  </div>
 }
 function Mini({label,value}){return <div className="rounded-xl bg-slate-50 p-3"><div className="text-xs text-slate-400">{label}</div><div className="mt-1 truncate text-sm font-bold text-slate-900">{value}</div></div>}
