@@ -3,15 +3,49 @@ import { NavLink, useLocation } from "react-router-dom";
 import { ChevronDown, ArrowRight } from "lucide-react";
 import { NAV_SECTIONS } from "../data/navigation.js";
 import { useAuth } from "../auth/AuthContext.jsx";
+import { hasPermission } from "../auth/permissions.js";
+
+const NAV_ITEM_PERMISSIONS = {
+  dashboard: "dashboard.view",
+  "china-sync": "china_sync.view",
+  china: "china_warehouse.view",
+  packages: "packages.view",
+  containers: "containers.view",
+  shipments: "shipments.view",
+  tracking: "tracking.view",
+  cambodia: "cambodia_warehouse.view",
+  billing: "invoice.view",
+  delivery: "deliveries.view",
+  customers: "customers.view",
+  pricing: "pricing.view",
+  finance: "finance.view",
+  invoices: "invoice.view",
+  payments: "payment.view",
+  receipts: "income.view",
+  income: "income.view",
+  expenses: "expenses.view",
+  reports: "report.view",
+  users: "users.manage",
+  roles: "users.manage",
+  settings: "settings.manage",
+  "test-data": "test-data.manage",
+};
+
+function canSeeNavigationItem(user, item) {
+  const permission = NAV_ITEM_PERMISSIONS[item.key];
+
+  if (!permission) {
+    return String(user?.role || "").trim().toLowerCase() ===
+      "super admin";
+  }
+
+  return hasPermission(user, permission);
+}
 
 export default function Sidebar({ mobileOpen, setMobileOpen }) {
   const location = useLocation();
   const { user } = useAuth();
-  const permissions = Array.isArray(user?.permissions) ? user.permissions : [];
-  const role = String(user?.role || "").trim().toLowerCase();
-  const canManageTestData = permissions.length > 0
-    ? permissions.includes("*") || permissions.includes("test-data.manage")
-    : ["super admin", "admin", "finance", "accounting"].includes(role);
+  const canSeeItem = (item) => canSeeNavigationItem(user, item);
   const [openKey, setOpenKey] = useState(null);
 
   // Auto-expand the section that matches the current route.
@@ -74,7 +108,7 @@ export default function Sidebar({ mobileOpen, setMobileOpen }) {
         {/* Navigation */}
         <nav className="flex-1 overflow-y-auto py-3 px-3">
 
-          {NAV_SECTIONS.filter(section => section.items.some(item => item.key !== "test-data" || canManageTestData)).map((section, si) => (
+          {NAV_SECTIONS.filter(section => section.items.some(canSeeItem)).map((section, si) => (
 
             <div
               key={si}
@@ -87,7 +121,7 @@ export default function Sidebar({ mobileOpen, setMobileOpen }) {
                 </p>
               )}
 
-              {section.items.filter(item => item.key !== "test-data" || canManageTestData).map((item) => {
+              {section.items.filter(canSeeItem).map((item) => {
 
                 const Icon = item.icon;
 
@@ -187,7 +221,7 @@ export default function Sidebar({ mobileOpen, setMobileOpen }) {
 
                       <div className="ml-4 pl-3 border-l border-slate-100 mt-0.5 flex flex-col gap-0.5">
 
-                        {item.children.map(
+                        {item.children.filter(canSeeItem).map(
                           (child) => (
 
                             <NavLink

@@ -1,5 +1,5 @@
 import React from "react";
-import { Routes, Route, Navigate } from "react-router-dom";
+import { Routes, Route, Navigate, useLocation } from "react-router-dom";
 
 import AppLayout from "./layout/AppLayout.jsx";
 import PlaceholderPage from "./pages/PlaceholderPage.jsx";
@@ -56,6 +56,7 @@ import {
   AuthProvider,
   useAuth,
 } from "./auth/AuthContext.jsx";
+import { canAccessPage } from "./auth/permissions.js";
 
 
 const BUILT_ROUTES = {
@@ -144,6 +145,7 @@ const ALL_PATHS = [
 
 function ProtectedRoutes() {
   const { user, loading } = useAuth();
+  const location = useLocation();
 
   if (loading) {
     return (
@@ -157,6 +159,26 @@ function ProtectedRoutes() {
 
   if (!user) {
     return <Navigate to="/login" replace />;
+  }
+
+  // Let the existing root route redirect to /home.
+  if (
+    location.pathname !== "/" &&
+    !canAccessPage(user, location.pathname)
+  ) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
+        <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-8 text-center shadow-sm">
+          <h1 className="text-2xl font-semibold text-slate-900">
+            403 — Access Denied
+          </h1>
+          <p className="mt-3 text-sm text-slate-600">
+            You do not have permission to access this page.
+            Please contact your administrator if you need access.
+          </p>
+        </div>
+      </div>
+    );
   }
 
   return (

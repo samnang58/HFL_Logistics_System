@@ -42,60 +42,246 @@ export function AppUser(){
   const [role,setRole]=useState('');
   const [modal,setModal]=useState(null);
   const [saving,setSaving]=useState(false);
-  const [form,setForm]=useState({name:'',email:'',password:'',role:'Sales',permissions:[]});
+  const [form,setForm]=useState({
+    name:'',email:'',phone:'',department:'Sales',
+    password:'',role:'Sales',permissions:[]
+  });
+
   const roles=['Super Admin','Admin','Finance','Accounting','Sales','Warehouse','Delivery'];
-  const permissions=['users.manage','invoice.view','invoice.create','invoice.print','invoice.download','payment.view','payment.create','report.view','billing.settings'];
+  const departments=['Sales','Warehouse','Finance','Delivery','Customer Service','Admin','Management','Other'];
+  const permissions=[
+    'users.manage','invoice.view','invoice.create','invoice.print',
+    'invoice.download','payment.view','payment.create','report.view',
+    'billing.settings'
+  ];
 
   const load=async()=>{
-    setLoading(true); setError('');
-    try { setUsersList(await userApi.list({search,role})); }
-    catch(e){ setError(e?.message||'Failed to load users'); }
-    finally { setLoading(false); }
-  };
-  React.useEffect(()=>{ load(); },[search,role]);
-
-  const openCreate=()=>{setForm({name:'',email:'',password:'',role:'Sales',permissions:[]});setModal('create');};
-  const openEdit=(u)=>{setForm({id:u.id,name:u.name||'',email:u.email||'',password:'',role:u.role||'Sales',permissions:u.permissions||[]});setModal('edit');};
-  const save=async()=>{
-    if(!form.name||!form.email||(modal==='create'&&!form.password)) return setError('Name, email and password are required for a new user.');
-    setSaving(true);setError('');
+    setLoading(true);
+    setError('');
     try{
-      const body={name:form.name,email:form.email,role:form.role,permissions:form.permissions};
-      if(modal==='create') body.password=form.password;
-      await (modal==='create'?userApi.create(body):userApi.update(form.id,body));
-      setModal(null); await load();
-    }catch(e){setError(e?.message||'Unable to save user');}finally{setSaving(false);}
+      setUsersList(await userApi.list({search,role}));
+    }catch(e){
+      setError(e?.message||'Failed to load staff');
+    }finally{
+      setLoading(false);
+    }
   };
+
+  React.useEffect(()=>{load();},[search,role]);
+
+  const openCreate=()=>{
+    setError('');
+    setForm({
+      name:'',email:'',phone:'',department:'Sales',
+      password:'',role:'Sales',permissions:[]
+    });
+    setModal('create');
+  };
+
+  const openEdit=(u)=>{
+    setError('');
+    setForm({
+      id:u.id,
+      name:u.name||'',
+      email:u.email||'',
+      phone:u.phone||'',
+      department:u.department||'Other',
+      password:'',
+      role:u.role||'Sales',
+      permissions:Array.isArray(u.permissions)?u.permissions:[]
+    });
+    setModal('edit');
+  };
+
+  const save=async()=>{
+    if(!form.name.trim()||!form.email.trim()||!form.phone.trim()||!form.department){
+      setError('Name, email, phone and department are required.');
+      return;
+    }
+    if(modal==='create'&&(!form.password||form.password.length<8)){
+      setError('A password of at least 8 characters is required for new staff.');
+      return;
+    }
+
+    setSaving(true);
+    setError('');
+    try{
+      const body={
+        name:form.name.trim(),
+        email:form.email.trim(),
+        phone:form.phone.trim(),
+        department:form.department,
+        role:form.role,
+        permissions:form.permissions
+      };
+      if(modal==='create') body.password=form.password;
+
+      await (modal==='create'
+        ? userApi.create(body)
+        : userApi.update(form.id,body));
+
+      setModal(null);
+      await load();
+    }catch(e){
+      setError(e?.message||'Unable to save staff');
+    }finally{
+      setSaving(false);
+    }
+  };
+
   const remove=async(u)=>{
     if(!window.confirm(`Delete ${u.name}?`)) return;
-    try{await userApi.remove(u.id);await load();}catch(e){setError(e?.message||'Unable to delete user');}
+    try{
+      await userApi.remove(u.id);
+      await load();
+    }catch(e){
+      setError(e?.message||'Unable to delete staff');
+    }
   };
+
   const reset=async(u)=>{
     const password=window.prompt(`New password for ${u.name} (minimum 8 characters):`);
     if(!password) return;
-    try{await userApi.resetPassword(u.id,password);window.alert('Password reset successfully.');}catch(e){setError(e?.message||'Unable to reset password');}
+    if(password.length<8){
+      setError('Password must contain at least 8 characters.');
+      return;
+    }
+    try{
+      await userApi.resetPassword(u.id,password);
+      window.alert('Password reset successfully.');
+    }catch(e){
+      setError(e?.message||'Unable to reset password');
+    }
   };
-  const togglePermission=(name)=>setForm(f=>({...f,permissions:f.permissions.includes(name)?f.permissions.filter(x=>x!==name):[...f.permissions,name]}));
-  const active=usersList.filter(u=>String(u.status||'Active').toLowerCase()!=='inactive').length;
 
-  return <Page icon={Users} title="App User" subtitle="Manage system users, roles and access permissions" actions={<Button primary icon={Plus} onClick={openCreate}>Add User</Button>}>
+  const togglePermission=(name)=>setForm(f=>({
+    ...f,
+    permissions:f.permissions.includes(name)
+      ? f.permissions.filter(x=>x!==name)
+      : [...f.permissions,name]
+  }));
+
+  const active=usersList.filter(
+    u=>String(u.status||'Active').toLowerCase()!=='inactive'
+  ).length;
+
+  return <Page
+    icon={Users}
+    title="HFL Logistics Staff Management"
+    subtitle="Manage staff profiles, departments, roles and individual access permissions"
+    actions={<Button primary icon={Plus} onClick={openCreate}>Add Staff</Button>}
+  >
     <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
-      <Stat icon={UserRound} title="Total Users" value={usersList.length}/>
-      <Stat icon={UserRound} title="Active Users" value={active} color="green"/>
-      <Stat icon={UserRound} title="Inactive Users" value={Math.max(0,usersList.length-active)} color="red"/>
+      <Stat icon={UserRound} title="Total Staff" value={usersList.length}/>
+      <Stat icon={UserRound} title="Active Staff" value={active} color="green"/>
+      <Stat icon={UserRound} title="Inactive Staff" value={Math.max(0,usersList.length-active)} color="red"/>
       <Stat icon={Crown} title="Administrators" value={usersList.filter(u=>['Super Admin','Admin'].includes(u.role)).length} color="purple"/>
     </div>
+
     {error&&<div className="bg-red-50 border border-red-200 text-red-700 rounded-lg p-3 text-sm">{error}</div>}
+
     <div className="bg-white border border-slate-200 rounded-xl p-3 flex flex-wrap gap-3 items-center">
-      <div className="h-10 flex-1 min-w-[220px] border border-slate-200 rounded-lg bg-white flex items-center gap-2 px-3"><Search size={17} className="text-slate-400"/><input value={search} onChange={e=>setSearch(e.target.value)} className="outline-none flex-1 text-sm" placeholder="Search name or email..."/></div>
-      <select value={role} onChange={e=>setRole(e.target.value)} className="h-10 border border-slate-200 rounded-lg px-3 text-sm"><option value="">All Roles</option>{roles.map(r=><option key={r}>{r}</option>)}</select>
+      <div className="h-10 flex-1 min-w-[220px] border border-slate-200 rounded-lg bg-white flex items-center gap-2 px-3">
+        <Search size={17} className="text-slate-400"/>
+        <input
+          value={search}
+          onChange={e=>setSearch(e.target.value)}
+          className="outline-none flex-1 text-sm"
+          placeholder="Search name, email, phone or department..."
+        />
+      </div>
+      <select value={role} onChange={e=>setRole(e.target.value)} className="h-10 border border-slate-200 rounded-lg px-3 text-sm">
+        <option value="">All Roles</option>
+        {roles.map(r=><option key={r} value={r}>{r}</option>)}
+      </select>
       <Button icon={RotateCcw} onClick={()=>{setSearch('');setRole('');}}>Reset</Button>
     </div>
-    <TableShell title="👤 User List" subtitle={loading?'Loading users...':`Showing ${usersList.length} users`}>
-      <div className="overflow-x-auto"><table className="w-full text-sm"><thead className="bg-slate-50 text-xs"><tr>{['#','Full Name','Email','Role','Permissions','Created At','Action'].map(h=><th key={h} className="text-left px-3 py-3">{h}</th>)}</tr></thead>
-      <tbody>{usersList.map((u,i)=><tr className="border-t" key={u.id}><td className="px-3 py-2">{i+1}</td><td className="px-3 py-2 font-semibold">{u.name}</td><td className="px-3 py-2">{u.email}</td><td className="px-3 py-2"><span className="px-2 py-1 rounded-full bg-blue-50 text-blue-600 text-xs font-semibold">{u.role}</span></td><td className="px-3 py-2 text-xs text-slate-500">{(u.permissions||[]).length?u.permissions.join(', '):'Role defaults'}</td><td className="px-3 py-2">{u.created_at?formatHflDateTime(u.created_at):'—'}</td><td className="px-3 py-2"><div className="flex gap-3 text-slate-500"><Pencil size={16} className="cursor-pointer hover:text-blue-600" onClick={()=>openEdit(u)}/><button className="text-xs hover:text-blue-600" onClick={()=>reset(u)}>Reset PW</button><button className="text-xs text-red-500 hover:text-red-700" onClick={()=>remove(u)}>Delete</button></div></td></tr>)}{!loading&&!usersList.length&&<tr><td colSpan="7" className="px-4 py-10 text-center text-slate-400">No users found.</td></tr>}</tbody></table></div>
+
+    <TableShell title="👥 Staff List" subtitle={loading?'Loading staff...':`Showing ${usersList.length} staff members`}>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-slate-50 text-xs">
+            <tr>
+              {['#','Full Name','Email','Phone','Department','Role','Permissions','Created At','Action'].map(h=><th key={h} className="text-left px-3 py-3 whitespace-nowrap">{h}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {usersList.map((u,i)=><tr className="border-t" key={u.id}>
+              <td className="px-3 py-2">{i+1}</td>
+              <td className="px-3 py-2 font-semibold">{u.name}</td>
+              <td className="px-3 py-2">{u.email}</td>
+              <td className="px-3 py-2">{u.phone||'—'}</td>
+              <td className="px-3 py-2">{u.department||'—'}</td>
+              <td className="px-3 py-2"><span className="px-2 py-1 rounded-full bg-blue-50 text-blue-600 text-xs font-semibold">{u.role}</span></td>
+              <td className="px-3 py-2 text-xs text-slate-500">{(u.permissions||[]).length?u.permissions.join(', '):'Role defaults'}</td>
+              <td className="px-3 py-2 whitespace-nowrap">{u.created_at?formatHflDateTime(u.created_at):'—'}</td>
+              <td className="px-3 py-2">
+                <div className="flex gap-3 text-slate-500">
+                  <Pencil size={16} className="cursor-pointer hover:text-blue-600" onClick={()=>openEdit(u)}/>
+                  <button className="text-xs hover:text-blue-600" onClick={()=>reset(u)}>Reset PW</button>
+                  <button className="text-xs text-red-500 hover:text-red-700" onClick={()=>remove(u)}>Delete</button>
+                </div>
+              </td>
+            </tr>)}
+            {!loading&&!usersList.length&&<tr><td colSpan="9" className="px-4 py-10 text-center text-slate-400">No staff found.</td></tr>}
+          </tbody>
+        </table>
+      </div>
     </TableShell>
-    {modal&&<div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"><div className="bg-white rounded-2xl w-full max-w-xl shadow-xl"><div className="p-5 border-b flex items-center justify-between"><div><h3 className="font-bold text-lg">{modal==='create'?'Add User':'Edit User'}</h3><p className="text-xs text-slate-400">User data is saved through Laravel API.</p></div><button onClick={()=>setModal(null)}><XCircle/></button></div><div className="p-5 grid md:grid-cols-2 gap-4"><label className="text-sm">Full Name<input className="mt-1 w-full h-10 border rounded-lg px-3" value={form.name} onChange={e=>setForm({...form,name:e.target.value})}/></label><label className="text-sm">Email<input type="email" className="mt-1 w-full h-10 border rounded-lg px-3" value={form.email} onChange={e=>setForm({...form,email:e.target.value})}/></label><label className="text-sm">Role<select className="mt-1 w-full h-10 border rounded-lg px-3" value={form.role} onChange={e=>setForm({...form,role:e.target.value})}>{roles.map(r=><option key={r}>{r}</option>)}</select></label>{modal==='create'&&<label className="text-sm">Password<input type="password" className="mt-1 w-full h-10 border rounded-lg px-3" value={form.password} onChange={e=>setForm({...form,password:e.target.value})}/></label>}<div className="md:col-span-2"><div className="text-sm font-semibold mb-2">Permissions</div><div className="grid grid-cols-2 md:grid-cols-3 gap-2">{permissions.map(p=><label key={p} className="text-xs flex gap-2 items-center"><input type="checkbox" checked={form.permissions.includes(p)} onChange={()=>togglePermission(p)}/>{p}</label>)}</div></div></div><div className="p-5 border-t flex justify-end gap-2"><Button onClick={()=>setModal(null)}>Cancel</Button><Button primary onClick={save} disabled={saving}>{saving?'Saving...':'Save User'}</Button></div></div></div>}
+
+    {modal&&<div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4 overflow-y-auto">
+      <div className="bg-white rounded-2xl w-full max-w-2xl shadow-xl max-h-[90vh] overflow-y-auto">
+        <div className="p-5 border-b flex items-center justify-between">
+          <div>
+            <h3 className="font-bold text-lg">{modal==='create'?'Add Staff':'Edit Staff'}</h3>
+            <p className="text-xs text-slate-400">Staff data is saved through the existing Laravel API.</p>
+          </div>
+          <button onClick={()=>setModal(null)} aria-label="Close staff form"><XCircle/></button>
+        </div>
+
+        <div className="p-5 grid md:grid-cols-2 gap-4">
+          <label className="text-sm">Full Name *
+            <input required className="mt-1 w-full h-10 border rounded-lg px-3" value={form.name} onChange={e=>setForm({...form,name:e.target.value})}/>
+          </label>
+          <label className="text-sm">Email *
+            <input required type="email" className="mt-1 w-full h-10 border rounded-lg px-3" value={form.email} onChange={e=>setForm({...form,email:e.target.value})}/>
+          </label>
+          <label className="text-sm">Phone *
+            <input required type="tel" className="mt-1 w-full h-10 border rounded-lg px-3" value={form.phone} onChange={e=>setForm({...form,phone:e.target.value})} placeholder="Enter phone number"/>
+          </label>
+          <label className="text-sm">Department *
+            <select required className="mt-1 w-full h-10 border rounded-lg px-3" value={form.department} onChange={e=>setForm({...form,department:e.target.value})}>
+              {departments.map(d=><option key={d} value={d}>{d}</option>)}
+            </select>
+          </label>
+          <label className="text-sm">Role *
+            <select className="mt-1 w-full h-10 border rounded-lg px-3" value={form.role} onChange={e=>setForm({...form,role:e.target.value})}>
+              {roles.map(r=><option key={r} value={r}>{r}</option>)}
+            </select>
+          </label>
+          {modal==='create'&&<label className="text-sm">Password *
+            <input required minLength={8} type="password" autoComplete="new-password" className="mt-1 w-full h-10 border rounded-lg px-3" value={form.password} onChange={e=>setForm({...form,password:e.target.value})}/>
+            <span className="block text-xs text-slate-400 mt-1">At least 8 characters</span>
+          </label>}
+
+          <div className="md:col-span-2">
+            <div className="text-sm font-semibold mb-2">Individual Permissions</div>
+            <p className="text-xs text-slate-500 mb-3">Choose the permissions assigned to this staff member.</p>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+              {permissions.map(p=><label key={p} className="text-xs flex gap-2 items-center">
+                <input type="checkbox" checked={form.permissions.includes(p)} onChange={()=>togglePermission(p)}/>
+                {p}
+              </label>)}
+            </div>
+          </div>
+        </div>
+
+        <div className="p-5 border-t flex justify-end gap-2">
+          <Button onClick={()=>setModal(null)}>Cancel</Button>
+          <Button primary onClick={save} disabled={saving}>{saving?'Saving...':modal==='create'?'Create Staff':'Save Changes'}</Button>
+        </div>
+      </div>
+    </div>}
   </Page>;
 }
 const customers=[['HFL9168-JPZ','ABC Trading Co., Ltd.','Agency','China','+86 138 0012 3456','abc@trading.com','Active','2025-08-20'],['KNG8688-JPZ','Sokha Store','End User','Cambodia','+855 12 345 678','sokha.store@gmail.com','Active','2025-08-18'],['HFL7015-JPZ','Modern Home','Commercial','Cambodia','+855 98 765 432','modernhome@gmail.com','Active','2025-08-15'],['HFL8791','Ching Shop','Individual','China','+86 139 8765 4321','ching@qq.com','Active','2025-08-12'],['HFL6177','Ratha Import','Government','Cambodia','+855 77 123 456','ratha@gov.kh','Active','2025-08-10'],['HFL8640','Dara electronics','Commercial','Cambodia','+855 96 654 321','dara.elec@gmail.com','Active','2025-08-08'],['HFL8792-JPZ','Virak Buntham','Agency','Cambodia','+855 88 222 333','info@vbexpress.com','Active','2025-08-05'],['HFL8783','Samnang Retail','End User','Cambodia','+855 12 987 654','samnang.retail@gmail.com','Inactive','2025-08-03'],['HFL8772','Kimly Market','Individual','Cambodia','+855 70 888 222','kimly168@gmail.com','Active','2025-07-28'],['YW-HFL8633-JPZ','Yiwu Supplier','Commercial','China','+86 137 1234 5678','supplier@yiwu.com','Active','2025-07-25']];

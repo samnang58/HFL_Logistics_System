@@ -13,7 +13,7 @@ export default function Login() {
   const navigate = useNavigate();
   const { login } = useAuth();
 
-  const [email, setEmail] = useState(
+  const [loginId, setLoginId] = useState(
     "admin@hfl-logistics.com"
   );
   const [password, setPassword] = useState("");
@@ -26,8 +26,8 @@ export default function Login() {
 
     setError("");
 
-    if (!email.trim()) {
-      setError("Please enter your email.");
+    if (!loginId.trim()) {
+      setError("Please enter your email or phone number.");
       return;
     }
 
@@ -40,7 +40,7 @@ export default function Login() {
       setSubmitting(true);
 
       await login(
-        email.trim(),
+        loginId.trim(),
         password
       );
 
@@ -52,7 +52,7 @@ export default function Login() {
 
       setError(
         err?.message ||
-          "Invalid email or password."
+          "Invalid email/phone or password."
       );
     } finally {
       setSubmitting(false);
@@ -119,7 +119,7 @@ export default function Login() {
             <div>
 
               <label className="block text-sm font-medium text-slate-700 mb-2">
-                Email
+                Email or Phone
               </label>
 
               <div className="relative">
@@ -130,14 +130,14 @@ export default function Login() {
                 />
 
                 <input
-                  type="email"
-                  value={email}
+                  type="text"
+                  value={loginId}
                   onChange={(e) =>
-                    setEmail(e.target.value)
+                    setLoginId(e.target.value)
                   }
-                  placeholder="admin@hfl-logistics.com"
+                  placeholder="Enter email or phone number"
                   className="w-full h-11 rounded-lg border border-slate-200 pl-10 pr-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                  autoComplete="email"
+                  autoComplete="username"
                 />
 
               </div>

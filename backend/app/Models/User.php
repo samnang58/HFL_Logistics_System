@@ -24,36 +24,22 @@ class User extends Authenticatable
 
     public function hasPermission(string $permission): bool
     {
-        $permissions = $this->permissions;
-
-        if (is_array($permissions) && count($permissions) > 0) {
-            return in_array('*', $permissions, true) || in_array($permission, $permissions, true);
-        }
-
         $role = strtolower(trim((string) $this->role));
-        $all = ['*'];
-        $billing = [
-            'invoice.view',
-            'invoice.create',
-            'invoice.print',
-            'invoice.download',
-            'payment.view',
-            'payment.create',
-        ];
 
-        if (in_array($role, ['super admin', 'admin', 'finance', 'accounting'], true)) {
+        // Super Admin is the only role with unconditional full access.
+        if ($role === 'super admin') {
             return true;
         }
 
-        if ($role === 'sales') {
-            return in_array($permission, ['invoice.view', 'invoice.create', 'invoice.print', 'invoice.download'], true);
+        // All other users receive only explicitly assigned permissions.
+        $permissions = $this->permissions;
+
+        if (!is_array($permissions) || count($permissions) === 0) {
+            return false;
         }
 
-        if ($role === 'warehouse') {
-            return in_array($permission, ['invoice.view', 'invoice.create', 'invoice.print'], true);
-        }
-
-        return false;
+        // The wildcard must not grant automatic full access to other roles.
+        return in_array($permission, $permissions, true);
     }
 
     public function customers()
