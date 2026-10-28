@@ -23,7 +23,8 @@ class ChinaWayBillSyncTest extends TestCase
             'name' => 'China Sync Test Admin',
             'email' => 'china-sync-test@example.com',
             'password' => Hash::make('test-password'),
-            'role' => 'Admin',
+            'role' => 'Super Admin',
+            'is_active' => true,
         ]);
 
         Sanctum::actingAs($user);
@@ -70,12 +71,7 @@ class ChinaWayBillSyncTest extends TestCase
 
         $syncResponse->assertSuccessful();
 
-        fwrite(
-            STDERR,
-            "\\n===== CHINA SYNC RESPONSE =====\\n"
-            . json_encode($syncResponse->json(), JSON_PRETTY_PRINT)
-            . "\\n===== END RESPONSE =====\\n"
-        );
+
 
         $package = Package::where(
             'china_waybill_number',

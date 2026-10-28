@@ -17,26 +17,47 @@ class AuthController extends ApiController
             'password' => ['required', 'string'],
         ]);
 
-        // Support the new "login" field and legacy "email" clients.
-        $identifier = trim((string) ($data['login'] ?? $data['email'] ?? ''));
+        // Support phone login and legacy email login.
+        $identifier = trim((string) (
+            $data['login'] ?? $data['email'] ?? ''
+        ));
 
         if ($identifier === '') {
-            return $this->fail('Email or phone is required.', [], 422);
+            return $this->fail(
+                'Email or phone is required.',
+                [],
+                422
+            );
         }
 
+        // Find staff by email or phone.
         if (str_contains($identifier, '@')) {
             $user = User::where('email', $identifier)->first();
         } elseif (Schema::hasColumn('users', 'phone')) {
             $user = User::where('phone', $identifier)->first();
         } else {
-            // Phone login becomes available after the phone column exists.
             $user = null;
         }
 
+        // Verify password.
         if (!$user || !Hash::check($data['password'], $user->password)) {
-            return $this->fail('Invalid credentials', [], 401);
+            return $this->fail(
+                'Invalid credentials',
+                [],
+                401
+            );
         }
 
+        // Block disabled staff BEFORE creating a token.
+        if (!$user->is_active) {
+            return $this->fail(
+                'Account is disabled. Contact Super Admin.',
+                [],
+                403
+            );
+        }
+
+        // Create Sanctum token only for active staff.
         $token = $user->createToken('hfl-web')->plainTextToken;
 
         return $this->ok([

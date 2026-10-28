@@ -47,13 +47,72 @@ export function AppUser(){
     password:'',role:'Sales',permissions:[]
   });
 
-  const roles=['Super Admin','Admin','Finance','Accounting','Sales','Warehouse','Delivery'];
+  const roles=['Admin','Finance','Accounting','Sales','Warehouse','Delivery'];
   const departments=['Sales','Warehouse','Finance','Delivery','Customer Service','Admin','Management','Other'];
-  const permissions=[
-    'users.manage','invoice.view','invoice.create','invoice.print',
-    'invoice.download','payment.view','payment.create','report.view',
-    'billing.settings'
-  ];
+  const permissionGroups = [
+  {
+    title: 'Dashboard & Approvals',
+    keys: ['dashboard.view', 'approvals.view']
+  },
+  {
+  title: 'CRM & Customers',
+  keys: [
+    'crm.view',
+    'crm.manage',
+    'customers.view',
+    'customers.manage'
+  ]
+},
+  {
+    title: 'Buying & Stock',
+    keys: ['buying.view', 'stock.view']
+  },
+  {
+    title: 'Sales & Pricing',
+    keys: ['selling.view', 'pricing.view', 'pricing.manage', 'quotation.view', 'quotation.manage']
+  },
+    {
+      title: 'Shipping & Delivery',
+      keys: [
+        'shipments.view',
+        'shipments.manage',
+        'shipping_modes.view',
+        'shipping_modes.manage',
+        'tracking.view',
+        'tracking.manage',
+        'deliveries.view',
+        'deliveries.manage'
+      ]
+    },
+  {
+    title: 'Warehouse Management',
+    keys: [
+      'warehouses.view',
+      'warehouses.manage',
+      'china_warehouse.view',
+      'china_sync.view',
+      'china_sync.manage',
+      'cambodia_warehouse.view',
+      'cambodia_warehouse.manage',
+      'containers.view',
+      'containers.manage'
+    ]
+  },
+  {
+    title: 'Reports & HR',
+    keys: ['report.view', 'hr.view']
+  },
+  {
+    title: 'System & Data',
+    keys: [
+      'data_import.manage',
+      'settings.manage',
+      'test-data.manage'
+    ]
+  }
+];
+
+const permissions = permissionGroups.flatMap(group => group.keys);
 
   const load=async()=>{
     setLoading(true);
@@ -94,10 +153,11 @@ export function AppUser(){
   };
 
   const save=async()=>{
-    if(!form.name.trim()||!form.email.trim()||!form.phone.trim()||!form.department){
-      setError('Name, email, phone and department are required.');
-      return;
+    if(!form.name.trim()||!form.phone.trim()||!form.department){
+    setError('Name, phone and department are required.');
+    return;
     }
+
     if(modal==='create'&&(!form.password||form.password.length<8)){
       setError('A password of at least 8 characters is required for new staff.');
       return;
@@ -108,7 +168,7 @@ export function AppUser(){
     try{
       const body={
         name:form.name.trim(),
-        email:form.email.trim(),
+        email:form.email.trim() || null,
         phone:form.phone.trim(),
         department:form.department,
         role:form.role,
@@ -129,15 +189,54 @@ export function AppUser(){
     }
   };
 
-  const remove=async(u)=>{
-    if(!window.confirm(`Delete ${u.name}?`)) return;
-    try{
-      await userApi.remove(u.id);
-      await load();
-    }catch(e){
-      setError(e?.message||'Unable to delete staff');
-    }
-  };
+  const disableStaff=async(u)=>{
+  if(String(u.role||'').trim().toLowerCase()==='super admin'){
+    setError('Super Admin accounts cannot be disabled.');
+    return;
+  }
+
+  if(!window.confirm(`Disable ${u.name}? This staff member will lose access to the system.`)){
+    return;
+  }
+
+  setError('');
+
+  try{
+    await userApi.remove(u.id);
+    await load();
+  }catch(e){
+    setError(e?.message||'Unable to disable staff');
+  }
+};
+
+const enableStaff=async(u)=>{
+  if(String(u.role||'').trim().toLowerCase()==='super admin'){
+    setError('Super Admin accounts cannot be modified here.');
+    return;
+  }
+
+  if(!window.confirm(`Enable ${u.name}?`)){
+    return;
+  }
+
+  setError('');
+
+  try{
+    await userApi.update(u.id,{
+      name:u.name,
+      email:u.email||null,
+      phone:u.phone,
+      department:u.department,
+      role:u.role,
+      permissions:Array.isArray(u.permissions)?u.permissions:[],
+      is_active:true
+    });
+
+    await load();
+  }catch(e){
+    setError(e?.message||'Unable to enable staff');
+  }
+};
 
   const reset=async(u)=>{
     const password=window.prompt(`New password for ${u.name} (minimum 8 characters):`);
@@ -162,8 +261,8 @@ export function AppUser(){
   }));
 
   const active=usersList.filter(
-    u=>String(u.status||'Active').toLowerCase()!=='inactive'
-  ).length;
+      u=>u.is_active===true
+    ).length;
 
   return <Page
     icon={Users}
@@ -202,28 +301,70 @@ export function AppUser(){
         <table className="w-full text-sm">
           <thead className="bg-slate-50 text-xs">
             <tr>
-              {['#','Full Name','Email','Phone','Department','Role','Permissions','Created At','Action'].map(h=><th key={h} className="text-left px-3 py-3 whitespace-nowrap">{h}</th>)}
+             {['#','Full Name','Email','Phone','Department','Role','Status','Permissions','Created At','Action'].map(h=><th key={h} className="text-left px-3 py-3 whitespace-nowrap">{h}</th>)}
             </tr>
           </thead>
           <tbody>
             {usersList.map((u,i)=><tr className="border-t" key={u.id}>
               <td className="px-3 py-2">{i+1}</td>
               <td className="px-3 py-2 font-semibold">{u.name}</td>
-              <td className="px-3 py-2">{u.email}</td>
+              <td className="px-3 py-2">{u.email || '—'}</td>
               <td className="px-3 py-2">{u.phone||'—'}</td>
               <td className="px-3 py-2">{u.department||'—'}</td>
-              <td className="px-3 py-2"><span className="px-2 py-1 rounded-full bg-blue-50 text-blue-600 text-xs font-semibold">{u.role}</span></td>
+              <td className="px-3 py-2">
+              <span className={`px-2 py-1 rounded-full text-xs font-semibold ${
+                u.is_active
+                  ? 'bg-green-50 text-green-700'
+                  : 'bg-red-50 text-red-700'
+              }`}>
+                {u.is_active ? 'Active' : 'Inactive'}
+              </span>
+            </td>
               <td className="px-3 py-2 text-xs text-slate-500">{(u.permissions||[]).length?u.permissions.join(', '):'Role defaults'}</td>
               <td className="px-3 py-2 whitespace-nowrap">{u.created_at?formatHflDateTime(u.created_at):'—'}</td>
               <td className="px-3 py-2">
-                <div className="flex gap-3 text-slate-500">
-                  <Pencil size={16} className="cursor-pointer hover:text-blue-600" onClick={()=>openEdit(u)}/>
-                  <button className="text-xs hover:text-blue-600" onClick={()=>reset(u)}>Reset PW</button>
-                  <button className="text-xs text-red-500 hover:text-red-700" onClick={()=>remove(u)}>Delete</button>
-                </div>
+                <div className="flex flex-wrap gap-3 text-slate-500">
+                {String(u.role||'').trim().toLowerCase()!=='super admin'&&(
+                <>
+                  <button
+                    type="button"
+                    className="text-xs hover:text-blue-600"
+                    onClick={()=>openEdit(u)}
+                  >
+                    Edit
+                  </button>
+
+                  <button
+                    type="button"
+                    className="text-xs hover:text-blue-600"
+                    onClick={()=>reset(u)}
+                  >
+                    Reset PW
+                  </button>
+
+                  {u.is_active?(
+                    <button
+                      type="button"
+                      className="text-xs text-red-500 hover:text-red-700"
+                      onClick={()=>disableStaff(u)}
+                    >
+                      Disable
+                    </button>
+                  ):(
+                    <button
+                      type="button"
+                      className="text-xs text-green-600 hover:text-green-700"
+                      onClick={()=>enableStaff(u)}
+                    >
+                      Enable
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
               </td>
             </tr>)}
-            {!loading&&!usersList.length&&<tr><td colSpan="9" className="px-4 py-10 text-center text-slate-400">No staff found.</td></tr>}
+            {!loading&&!usersList.length&&<tr><td colSpan="10" className="px-4 py-10 text-center text-slate-400">No staff found.</td></tr>}
           </tbody>
         </table>
       </div>
@@ -243,8 +384,14 @@ export function AppUser(){
           <label className="text-sm">Full Name *
             <input required className="mt-1 w-full h-10 border rounded-lg px-3" value={form.name} onChange={e=>setForm({...form,name:e.target.value})}/>
           </label>
-          <label className="text-sm">Email *
-            <input required type="email" className="mt-1 w-full h-10 border rounded-lg px-3" value={form.email} onChange={e=>setForm({...form,email:e.target.value})}/>
+          <label className="text-sm">Email (Optional)
+            <input
+              type="email"
+              className="mt-1 w-full h-10 border rounded-lg px-3"
+              value={form.email}
+              onChange={e=>setForm({...form,email:e.target.value})}
+              placeholder="Enter email (optional)"
+            />
           </label>
           <label className="text-sm">Phone *
             <input required type="tel" className="mt-1 w-full h-10 border rounded-lg px-3" value={form.phone} onChange={e=>setForm({...form,phone:e.target.value})} placeholder="Enter phone number"/>
@@ -265,15 +412,45 @@ export function AppUser(){
           </label>}
 
           <div className="md:col-span-2">
-            <div className="text-sm font-semibold mb-2">Individual Permissions</div>
-            <p className="text-xs text-slate-500 mb-3">Choose the permissions assigned to this staff member.</p>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-              {permissions.map(p=><label key={p} className="text-xs flex gap-2 items-center">
-                <input type="checkbox" checked={form.permissions.includes(p)} onChange={()=>togglePermission(p)}/>
-                {p}
-              </label>)}
-            </div>
-          </div>
+  <div className="text-sm font-semibold mb-2">
+    Staff Module Permissions
+  </div>
+
+  <p className="text-xs text-slate-500 mb-4">
+    Select which modules and actions this staff member can access.
+  </p>
+
+  <div className="space-y-4">
+    {permissionGroups.map(group => (
+      <div
+        key={group.title}
+        className="border border-slate-200 rounded-xl p-4"
+      >
+        <h4 className="text-sm font-semibold text-slate-800 mb-3">
+          {group.title}
+        </h4>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {group.keys.map(permission => (
+            <label
+              key={permission}
+              className="flex items-center gap-2 text-xs text-slate-700"
+            >
+              <input
+                type="checkbox"
+                checked={form.permissions.includes(permission)}
+                onChange={() => togglePermission(permission)}
+                className="h-4 w-4"
+              />
+
+              <span>{permission}</span>
+            </label>
+          ))}
+        </div>
+      </div>
+    ))}
+  </div>
+</div>
         </div>
 
         <div className="p-5 border-t flex justify-end gap-2">

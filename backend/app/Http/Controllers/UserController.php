@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\User;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\Rule;
@@ -11,23 +12,95 @@ use Illuminate\Validation\Rule;
 class UserController extends ApiController
 {
     private const ROLES = [
-        'Super Admin', 'Admin', 'Finance', 'Accounting',
-        'Sales', 'Warehouse', 'Delivery',
+        'Admin',
+        'Finance',
+        'Accounting',
+        'Sales',
+        'Warehouse',
+        'Delivery',
     ];
 
     private const DEPARTMENTS = [
-        'Sales', 'Warehouse', 'Finance', 'Delivery',
-        'Customer Service', 'Admin', 'Management', 'Other',
+        'Sales',
+        'Warehouse',
+        'Finance',
+        'Delivery',
+        'Customer Service',
+        'Admin',
+        'Management',
+        'Other',
     ];
+
+    private const ALLOWED_PERMISSIONS = [
+        'dashboard.view',
+        'approvals.view',
+        'crm.view',
+        'crm.manage',
+        'buying.view',
+        'stock.view',
+        'selling.view',
+        'hr.view',
+        'packages.view',
+        'packages.manage',
+        'data_import.manage',
+        'customers.view',
+        'customers.manage',
+        'pricing.view',
+        'pricing.manage',
+        'shipments.view',
+        'shipments.manage',
+        'shipping_modes.view',
+        'shipping_modes.manage',
+        'tracking.view',
+        'tracking.manage',
+        'warehouses.view',
+        'warehouses.manage',
+        'china_warehouse.view',
+        'china_sync.view',
+        'china_sync.manage',
+        'cambodia_warehouse.view',
+        'cambodia_warehouse.manage',
+        'containers.view',
+        'containers.manage',
+        'deliveries.view',
+        'deliveries.manage',
+        'finance.view',
+        'expenses.view',
+        'expenses.manage',
+        'income.view',
+        'income.manage',
+        'report.view',
+        'settings.manage',
+        'test-data.manage',
+        'quotation.view',
+        'quotation.manage',
+        'invoice.view',
+        'invoice.create',
+        'invoice.print',
+        'invoice.download',
+        'payment.view',
+        'payment.create',
+        'billing.settings',
+    ];
+
+    private function isSuperAdmin(User $user): bool
+    {
+        return strtolower(trim((string) $user->role)) === 'super admin';
+    }
 
     private function staffColumns(): array
     {
         $columns = [
-            'id', 'name', 'email', 'role', 'permissions',
-            'created_at', 'updated_at',
+            'id',
+            'name',
+            'email',
+            'role',
+            'permissions',
+            'created_at',
+            'updated_at',
         ];
 
-        foreach (['phone', 'department'] as $column) {
+        foreach (['phone', 'department', 'is_active'] as $column) {
             if (Schema::hasColumn('users', $column)) {
                 $columns[] = $column;
             }
@@ -39,24 +112,82 @@ class UserController extends ApiController
     private function staffFieldsReady(): bool
     {
         return Schema::hasColumn('users', 'phone')
-            && Schema::hasColumn('users', 'department');
+            && Schema::hasColumn('users', 'department')
+            && Schema::hasColumn('users', 'is_active');
     }
 
     private function staffFieldsUnavailable()
     {
         return $this->fail(
-            'Staff phone and department fields are not available yet. A database migration is required before creating or updating staff details.',
+            'Required staff database fields are not available.',
             [],
             422
         );
     }
 
+    private function staffValidationRules(?User $user = null): array
+    {
+        $emailUnique = Rule::unique('users', 'email');
+        $phoneUnique = Rule::unique('users', 'phone');
+
+        if ($user) {
+            $emailUnique->ignore($user->id);
+            $phoneUnique->ignore($user->id);
+        }
+
+        return [
+            'name' => ['required', 'string', 'max:255'],
+
+            'email' => [
+                'nullable',
+                'email',
+                'max:255',
+                $emailUnique,
+            ],
+
+            'phone' => [
+                'required',
+                'string',
+                'max:30',
+                $phoneUnique,
+            ],
+
+            'department' => [
+                'required',
+                'string',
+                Rule::in(self::DEPARTMENTS),
+            ],
+
+            'role' => [
+                'required',
+                Rule::in(self::ROLES),
+            ],
+
+            'permissions' => [
+                'nullable',
+                'array',
+            ],
+
+            'permissions.*' => [
+                'string',
+                'distinct',
+                Rule::in(self::ALLOWED_PERMISSIONS),
+            ],
+
+            'is_active' => [
+                'sometimes',
+                'boolean',
+            ],
+        ];
+    }
+
     public function index(Request $request)
     {
-        $columns = $this->staffColumns();
-        $query = User::query()->select($columns);
+        $query = User::query()->select($this->staffColumns());
 
-        if ($search = trim((string) $request->input('search'))) {
+        $search = trim((string) $request->input('search', ''));
+
+        if ($search !== '') {
             $query->where(function ($q) use ($search) {
                 $q->where('name', 'like', "%{$search}%")
                     ->orWhere('email', 'like', "%{$search}%")
@@ -72,8 +203,8 @@ class UserController extends ApiController
             });
         }
 
-        if ($role = $request->input('role')) {
-            $query->where('role', $role);
+        if ($request->filled('role')) {
+            $query->where('role', $request->input('role'));
         }
 
         return $this->ok(
@@ -84,8 +215,12 @@ class UserController extends ApiController
 
     public function show($id)
     {
+        $user = User::query()
+            ->select($this->staffColumns())
+            ->findOrFail($id);
+
         return $this->ok(
-            User::query()->select($this->staffColumns())->findOrFail($id),
+            $user,
             'User retrieved successfully'
         );
     }
@@ -96,18 +231,31 @@ class UserController extends ApiController
             return $this->staffFieldsUnavailable();
         }
 
-        $data = $request->validate([
-            'name' => ['required', 'string', 'max:255'],
-            'email' => ['required', 'email', 'max:255', 'unique:users,email'],
-            'phone' => ['required', 'string', 'max:30', 'unique:users,phone'],
-            'department' => ['required', 'string', Rule::in(self::DEPARTMENTS)],
-            'password' => ['required', 'string', 'min:8'],
-            'role' => ['required', Rule::in(self::ROLES)],
-            'permissions' => ['nullable', 'array'],
-            'permissions.*' => ['string', 'max:100'],
-        ]);
+        $rules = $this->staffValidationRules();
+
+        $rules['password'] = [
+            'required',
+            'string',
+            'min:8',
+        ];
+
+        $data = $request->validate($rules);
+
+        // A new Super Admin cannot be created through this endpoint.
+        // The allowed role list intentionally excludes Super Admin.
+
+        $data['email'] = $data['email'] ?? null;
+
+        $data['permissions'] = array_values(
+            $data['permissions'] ?? []
+        );
+
+        // New staff are active by default.
+        // Ignore any is_active value submitted during creation.
+        $data['is_active'] = true;
 
         $data['password'] = Hash::make($data['password']);
+
         $user = User::create($data);
 
         return $this->ok(
@@ -124,23 +272,37 @@ class UserController extends ApiController
 
         $user = User::findOrFail($id);
 
-        $data = $request->validate([
-            'name' => ['required', 'string', 'max:255'],
-            'email' => [
-                'required', 'email', 'max:255',
-                Rule::unique('users', 'email')->ignore($user->id),
-            ],
-            'phone' => [
-                'required', 'string', 'max:30',
-                Rule::unique('users', 'phone')->ignore($user->id),
-            ],
-            'department' => ['required', 'string', Rule::in(self::DEPARTMENTS)],
-            'role' => ['required', Rule::in(self::ROLES)],
-            'permissions' => ['nullable', 'array'],
-            'permissions.*' => ['string', 'max:100'],
-        ]);
+        if ($this->isSuperAdmin($user)) {
+            return $this->fail(
+                'Super Admin accounts cannot be modified through Staff Management.',
+                [],
+                403
+            );
+        }
 
-        $user->update($data);
+        $data = $request->validate(
+            $this->staffValidationRules($user)
+        );
+
+        $data['email'] = $data['email'] ?? null;
+
+        $data['permissions'] = array_values(
+            $data['permissions'] ?? []
+        );
+
+        // A staff member cannot be promoted to Super Admin.
+        // The allowed role list intentionally excludes Super Admin.
+
+        DB::transaction(function () use ($user, $data) {
+            $wasActive = (bool) $user->is_active;
+
+            $user->update($data);
+
+            // Revoke existing sessions when a staff account is disabled.
+            if ($wasActive && !$user->is_active) {
+                $user->tokens()->delete();
+            }
+        });
 
         return $this->ok(
             $user->fresh()->only($this->staffColumns()),
@@ -151,49 +313,105 @@ class UserController extends ApiController
     public function resetPassword(Request $request, $id)
     {
         $data = $request->validate([
-            'password' => ['required', 'string', 'min:8'],
+            'password' => [
+                'required',
+                'string',
+                'min:8',
+            ],
         ]);
 
         $user = User::findOrFail($id);
-        $user->update(['password' => Hash::make($data['password'])]);
 
-        return $this->ok(null, 'Password reset successfully');
+        if ($this->isSuperAdmin($user)) {
+            return $this->fail(
+                'Super Admin passwords cannot be reset through Staff Management.',
+                [],
+                403
+            );
+        }
+
+        DB::transaction(function () use ($user, $data) {
+            $user->update([
+                'password' => Hash::make($data['password']),
+            ]);
+
+            // Force the staff member to log in again.
+            $user->tokens()->delete();
+        });
+
+        return $this->ok(
+            null,
+            'Password reset successfully. Existing sessions were revoked.'
+        );
     }
 
     public function destroy(Request $request, $id)
     {
+        if (!$this->staffFieldsReady()) {
+            return $this->staffFieldsUnavailable();
+        }
+
         $user = User::findOrFail($id);
 
         if ((int) $request->user()->id === (int) $user->id) {
-            return $this->fail('You cannot delete your own account.', [], 422);
+            return $this->fail(
+                'You cannot disable your own account.',
+                [],
+                422
+            );
         }
 
-        if ($user->role === 'Super Admin') {
-            return $this->fail('Super Admin accounts cannot be deleted.', [], 422);
+        if ($this->isSuperAdmin($user)) {
+            return $this->fail(
+                'Super Admin accounts cannot be disabled.',
+                [],
+                403
+            );
         }
 
-        $user->delete();
+        DB::transaction(function () use ($user) {
+            $user->update([
+                'is_active' => false,
+            ]);
 
-        return $this->ok(null, 'User deleted successfully');
+            // Revoke all existing staff sessions.
+            $user->tokens()->delete();
+        });
+
+        // Keep the user record and its historical relationships.
+        return $this->ok(
+            null,
+            'Staff disabled successfully'
+        );
     }
 
     public function sales()
-    {
-        $sales = User::query()
-            ->where('role', 'Sales')
-            ->orderBy('name')
-            ->get($this->staffColumns());
+{
+    $query = User::query()
+        ->where('role', 'Sales');
 
-        return $this->ok($sales, 'Sales users retrieved successfully');
+    if (Schema::hasColumn('users', 'is_active')) {
+        $query->where('is_active', true);
     }
 
-    public function deliveryDrivers()
-    {
-        $drivers = User::query()
-            ->whereIn('role', ['Delivery', 'Warehouse'])
-            ->orderBy('name')
-            ->get($this->staffColumns());
+    return $this->ok(
+        $query->orderBy('name')->get(['id', 'name', 'role']),
+        'Sales users retrieved successfully'
+    );
+}
 
-        return $this->ok($drivers, 'Delivery users retrieved successfully');
+public function deliveryDrivers()
+{
+    $query = User::query()
+        ->whereIn('role', ['Delivery', 'Warehouse']);
+
+    if (Schema::hasColumn('users', 'is_active')) {
+        $query->where('is_active', true);
     }
+
+    return $this->ok(
+        $query->orderBy('name')->get(['id', 'name', 'role']),
+        'Delivery users retrieved successfully'
+    );
+}
 }

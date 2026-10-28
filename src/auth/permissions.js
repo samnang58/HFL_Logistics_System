@@ -108,12 +108,22 @@ export function hasPermission(user, permission) {
   return permissions.includes(permission);
 }
 
+
+
 export function canAccessPage(user, pathname) {
+  // Only Super Admin can access Staff Management.
+  if (normalizePath(pathname) === "/app-user") {
+    return String(user?.role || "")
+      .trim()
+      .toLowerCase() === "super admin";
+  }
+
   const requiredPermission = findRequiredPermission(pathname);
 
   if (!requiredPermission) {
-    return String(user?.role || "").trim().toLowerCase() ===
-      "super admin";
+    return String(user?.role || "")
+      .trim()
+      .toLowerCase() === "super admin";
   }
 
   return hasPermission(user, requiredPermission);

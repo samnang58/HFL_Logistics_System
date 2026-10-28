@@ -1,3 +1,4 @@
+
 <?php
 
 date_default_timezone_set('Asia/Phnom_Penh');
@@ -8,6 +9,8 @@ use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Console\Scheduling\Schedule;
 use App\Http\Middleware\EnsurePermission;
 use App\Http\Middleware\AuditMutations;
+use App\Http\Middleware\EnsureSuperAdmin;
+use App\Http\Middleware\EnsureActiveUser;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -21,6 +24,8 @@ return Application::configure(basePath: dirname(__DIR__))
 
         $middleware->alias([
             'permission' => EnsurePermission::class,
+            'super-admin' => EnsureSuperAdmin::class,
+            'active-staff' => EnsureActiveUser::class,
         ]);
 
         $middleware->redirectGuestsTo(function ($request) {
