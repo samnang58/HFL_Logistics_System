@@ -22,7 +22,8 @@ class ContainerLifecycleTest extends TestCase
             'name' => 'Container Test Admin',
             'email' => 'container-test@example.com',
             'password' => Hash::make('test-password'),
-            'role' => 'Admin',
+            'role' => 'Super Admin',
+            'is_active' => true,
         ]);
 
         Sanctum::actingAs($user);
@@ -58,6 +59,8 @@ class ContainerLifecycleTest extends TestCase
             "/api/v1/containers/{$container->id}/packages",
             ['package_ids' => [$package->id]]
         );
+
+       // Temporary debug: identify the source of HTTP 403.
 
         $response->assertSuccessful();
 
