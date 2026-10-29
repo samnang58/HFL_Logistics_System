@@ -99,6 +99,40 @@ export function AppUser(){
     ]
   },
   {
+  title: 'HFL Packages',
+  keys: [
+    'packages.view',
+    'packages.manage'
+  ]
+},
+{
+  title: 'Finance & Accounting',
+  keys: [
+    'finance.view',
+    'income.view',
+    'income.manage',
+    'expenses.view',
+    'expenses.manage'
+  ]
+},
+{
+  title: 'Invoices & Payments',
+  keys: [
+    'invoice.view',
+    'invoice.create',
+    'invoice.print',
+    'invoice.download',
+    'payment.view',
+    'payment.create'
+  ]
+},
+{
+  title: 'Billing Settings',
+  keys: [
+    'billing.settings'
+  ]
+},
+  {
     title: 'Reports & HR',
     keys: ['report.view', 'hr.view']
   },
