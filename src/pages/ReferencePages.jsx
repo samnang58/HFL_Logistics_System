@@ -112,7 +112,11 @@ export function AppUser(){
     'income.view',
     'income.manage',
     'expenses.view',
-    'expenses.manage'
+    'expenses.manage',
+    'cash.view',
+    'cash.manage',
+    'finance.close',
+    'finance.reopen'
   ]
 },
 {

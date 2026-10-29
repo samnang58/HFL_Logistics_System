@@ -13,8 +13,6 @@ class IncomeController extends CrudController
 
     protected array $rules = [
         'customer_id' => 'nullable|string|max:100',
-        'invoice_id' => 'nullable|integer|exists:invoices,id',
-        'payment_id' => 'nullable|integer|exists:payments,id',
         'amount' => 'required|numeric|gt:0',
         'category' => 'required|string|max:100',
         'description' => 'nullable|string|max:1000',
@@ -30,12 +28,34 @@ class IncomeController extends CrudController
     {
         $data = $request->validate($this->rules);
 
+        // Prevent manually linking Income to an existing Payment.
+        if ($request->exists('payment_id')) {
+            return $this->fail(
+                'Payment-linked income must be created through the payment process.',
+                ['payment_id' => ['Manual payment linking is not allowed.']],
+                422
+            );
+        }
+
+        // Prevent manually linking Income to an existing Invoice.
+        if ($request->exists('invoice_id')) {
+            return $this->fail(
+                'Invoice-linked income must be created through the payment process.',
+                ['invoice_id' => ['Manual invoice linking is not allowed.']],
+                422
+            );
+        }
+
         return DB::transaction(function () use ($data) {
             $income = Income::create(array_merge($data, [
                 'income_no' => 'TMP-INC-' . Str::uuid(),
             ]));
-            $income->income_no = 'HFL-INC-' . str_pad((string) $income->id, 6, '0', STR_PAD_LEFT);
+
+            $income->income_no = 'HFL-INC-' .
+                str_pad((string) $income->id, 6, '0', STR_PAD_LEFT);
+
             $income->save();
+
             return $this->ok($income, 'Income recorded');
         });
     }

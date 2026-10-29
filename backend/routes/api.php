@@ -23,6 +23,8 @@ use App\Http\Controllers\DeliveryController;
 use App\Http\Controllers\PaymentController;
 use App\Http\Controllers\IncomeController;
 use App\Http\Controllers\ExpenseController;
+use App\Http\Controllers\CashAccountController;
+use App\Http\Controllers\CashTransactionController;
 use App\Http\Controllers\LeadController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\ReportController;
@@ -35,8 +37,10 @@ use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\TestDataController;
 
 Route::prefix('v1')->group(function () {
-Route::post('/telegram/webhook', TelegramWebhookController::class)
-    ->middleware('throttle:60,1');
+
+    Route::post('/telegram/webhook', TelegramWebhookController::class)
+        ->middleware('throttle:60,1');
+
     /*
     |--------------------------------------------------------------------------
     | Authentication
@@ -44,53 +48,71 @@ Route::post('/telegram/webhook', TelegramWebhookController::class)
     */
 
     Route::post('/auth/login', [AuthController::class, 'login']);
-
     Route::post('/customer/login', [CustomerAuthController::class, 'login']);
-    
-Route::middleware('auth:sanctum')->group(function () {
-    Route::get('/customer/me', [CustomerAuthController::class, 'me']);
-    Route::post('/customer/profile/avatar', [CustomerAuthController::class, 'uploadAvatar']);
-    Route::post('/customer/logout', [CustomerAuthController::class, 'logout']);
 
-    Route::get('/customer/shipments/counts', [CustomerShipmentController::class, 'counts']);
-    Route::get('/customer/bookings', [CustomerShipmentController::class, 'bookings']);
-    Route::get('/customer/reports', [CustomerShipmentController::class, 'reports']);
-    Route::get('/customer/shipments', [CustomerShipmentController::class, 'index']);
-    Route::get('/customer/shipments/counts', [CustomerShipmentController::class, 'counts']);
-    Route::get('/customer/shipments/{trackingNumber}', [CustomerShipmentController::class, 'show']);
-    Route::get('/customer/shipments/{trackingNumber}/tracking', [CustomerShipmentController::class, 'tracking']);
-   
-Route::get('/customer/warehouse-addresses', [
-    CustomerWarehouseController::class,
-    'index'
-]);
+    Route::middleware('auth:sanctum')->group(function () {
+        Route::get('/customer/me', [CustomerAuthController::class, 'me']);
+        Route::post('/customer/profile/avatar', [CustomerAuthController::class, 'uploadAvatar']);
+        Route::post('/customer/logout', [CustomerAuthController::class, 'logout']);
 
-    Route::post('/customer/scan/resolve', [CustomerShipmentController::class, 'resolveScan']);
-    Route::get('/customer/scan/recent', [CustomerShipmentController::class, 'recentScans']);
-});
+        Route::get('/customer/shipments/counts', [CustomerShipmentController::class, 'counts']);
+        Route::get('/customer/bookings', [CustomerShipmentController::class, 'bookings']);
+        Route::get('/customer/reports', [CustomerShipmentController::class, 'reports']);
+        Route::get('/customer/shipments', [CustomerShipmentController::class, 'index']);
+        Route::get('/customer/shipments/counts', [CustomerShipmentController::class, 'counts']);
+        Route::get('/customer/shipments/{trackingNumber}', [CustomerShipmentController::class, 'show']);
+        Route::get('/customer/shipments/{trackingNumber}/tracking', [CustomerShipmentController::class, 'tracking']);
+
+        Route::get('/customer/warehouse-addresses', [
+            CustomerWarehouseController::class,
+            'index',
+        ]);
+
+        Route::post('/customer/scan/resolve', [CustomerShipmentController::class, 'resolveScan']);
+        Route::get('/customer/scan/recent', [CustomerShipmentController::class, 'recentScans']);
+    });
+
     // FAKE China WayBill API for local testing (404 in production).
-    Route::post('/mock-china/WayBill/QueryWayBillSpeed', [\App\Http\Controllers\MockWayBillApiController::class, 'query']);
-    Route::get('/mock-china/image/{n}.svg', [\App\Http\Controllers\MockWayBillApiController::class, 'image'])->where('n', '[0-9]+');
+    Route::post('/mock-china/WayBill/QueryWayBillSpeed', [
+        \App\Http\Controllers\MockWayBillApiController::class,
+        'query',
+    ]);
 
+    Route::get('/mock-china/image/{n}.svg', [
+        \App\Http\Controllers\MockWayBillApiController::class,
+        'image',
+    ])->where('n', '[0-9]+');
 
     Route::middleware(['auth:sanctum', 'active-staff'])->group(function () {
-
 
         Route::post('/auth/logout', [AuthController::class, 'logout']);
         Route::get('/auth/me', [AuthController::class, 'me']);
 
-        Route::middleware('permission:shipping_modes.view')->group(function () {
-    Route::apiResource('shipping-modes', ShippingModeController::class)
-        ->only(['index', 'show']);
-});
+        /*
+        |--------------------------------------------------------------------------
+        | Shipping Modes
+        |--------------------------------------------------------------------------
+        */
 
-    Route::middleware('permission:shipping_modes.manage')->group(function () {
-        Route::apiResource('shipping-modes', ShippingModeController::class)
-            ->only(['store', 'update', 'destroy']);
-});
+        Route::middleware('permission:shipping_modes.view')->group(function () {
+            Route::apiResource('shipping-modes', ShippingModeController::class)
+                ->only(['index', 'show']);
+        });
+
+        Route::middleware('permission:shipping_modes.manage')->group(function () {
+            Route::apiResource('shipping-modes', ShippingModeController::class)
+                ->only(['store', 'update', 'destroy']);
+        });
+
+        /*
+        |--------------------------------------------------------------------------
+        | Billing Settings
+        |--------------------------------------------------------------------------
+        */
 
         Route::get('/billing/settings', [BillingSettingsController::class, 'show'])
             ->middleware('permission:billing.settings');
+
         Route::post('/billing/settings/aba-khqr', [BillingSettingsController::class, 'uploadKhqr'])
             ->middleware('permission:billing.settings');
 
@@ -100,13 +122,18 @@ Route::get('/customer/warehouse-addresses', [
         |--------------------------------------------------------------------------
         */
 
-        // Static user sub-routes must be declared before /users/{user} resource routes.
+        // Static user sub-routes must be declared before /users/{user}.
         Route::get('/users/sales', [UserController::class, 'sales']);
         Route::get('/users/delivery-drivers', [UserController::class, 'deliveryDrivers']);
 
-                Route::middleware('super-admin')->group(function () {
-                Route::apiResource('users', UserController::class)->only(['index', 'show', 'store', 'update', 'destroy']);
-            Route::post('/users/{id}/reset-password', [UserController::class, 'resetPassword']);
+        Route::middleware('super-admin')->group(function () {
+            Route::apiResource('users', UserController::class)
+                ->only(['index', 'show', 'store', 'update', 'destroy']);
+
+            Route::post('/users/{id}/reset-password', [
+                UserController::class,
+                'resetPassword',
+            ]);
         });
 
         /*
@@ -114,18 +141,17 @@ Route::get('/customer/warehouse-addresses', [
         | Customers
         |--------------------------------------------------------------------------
         */
-        // Read-only customer access.
+
         Route::middleware('permission:customers.view')->group(function () {
             Route::apiResource('customers', CustomerController::class)
                 ->only(['index', 'show']);
 
             Route::get('/customers/{id}/360', [
                 CustomerController::class,
-                'show360'
+                'show360',
             ]);
         });
 
-        // Create, update and delete customer records.
         Route::middleware('permission:customers.manage')->group(function () {
             Route::apiResource('customers', CustomerController::class)
                 ->only(['store', 'update', 'destroy']);
@@ -138,37 +164,49 @@ Route::get('/customer/warehouse-addresses', [
         */
 
         Route::get('/packages/scan', [PackageController::class, 'scan'])
-        ->middleware('permission:packages.view');
-        // Must be declared BEFORE apiResource('packages') or {id} swallows it.
+            ->middleware('permission:packages.view');
+
+        // Must be declared BEFORE apiResource('packages').
         Route::get('/packages/sync-logs', [PackageController::class, 'syncLogs'])
             ->middleware('permission:china_sync.view');
+
         Route::post('/packages/{id}/movement', [PackageController::class, 'updateMovement'])
             ->middleware('permission:packages.manage');
-        // View package list and details.
+
         Route::middleware('permission:packages.view')->group(function () {
             Route::apiResource('packages', PackageController::class)
                 ->only(['index', 'show']);
         });
 
-        // Create, update and delete packages.
         Route::middleware('permission:packages.manage')->group(function () {
             Route::apiResource('packages', PackageController::class)
                 ->only(['store', 'update', 'destroy']);
         });
+
         Route::post('/packages/{id}/receive-china', [PackageController::class, 'receiveChina'])
             ->middleware('permission:packages.manage');
+
         Route::post('/packages/{id}/images', [PackageController::class, 'uploadImages'])
             ->middleware('permission:packages.manage');
 
         Route::post('/packages/{id}/images/delete', [PackageController::class, 'deleteImage'])
             ->middleware('permission:packages.manage');
-        Route::post('/packages/{id}/confirm-received', [DeliveryController::class, 'confirmCustomerReceived'])
-            ->middleware('permission:deliveries.manage');
-        Route::post(
-            '/packages/sync-china',
-            [PackageController::class, 'syncChina']
-        )
-            ->middleware('permission:packages.manage');
+
+        Route::post('/packages/{id}/confirm-received', [
+            DeliveryController::class,
+            'confirmCustomerReceived',
+        ])->middleware('permission:deliveries.manage');
+
+        Route::post('/packages/sync-china', [
+            PackageController::class,
+            'syncChina',
+        ])->middleware('permission:packages.manage');
+
+        /*
+        |--------------------------------------------------------------------------
+        | China Sync
+        |--------------------------------------------------------------------------
+        */
 
         Route::middleware('permission:china_sync.view')->group(function () {
             Route::get('/china-sync/status', [ChinaSyncController::class, 'status']);
@@ -192,36 +230,33 @@ Route::get('/customer/warehouse-addresses', [
         |--------------------------------------------------------------------------
         */
 
-      // View shipment tracking history.
-        Route::get('/shipments/{id}/tracking', [ShipmentController::class, 'tracking'])
-            ->middleware('permission:tracking.view');
+        Route::get('/shipments/{id}/tracking', [
+            ShipmentController::class,
+            'tracking',
+        ])->middleware('permission:tracking.view');
 
-        // Add a tracking event.
-        Route::post('/shipments/{id}/tracking', [ShipmentController::class, 'addTrackingEvent'])
-            ->middleware('permission:shipments.manage');
+        Route::post('/shipments/{id}/tracking', [
+            ShipmentController::class,
+            'addTrackingEvent',
+        ])->middleware('permission:shipments.manage');
 
-        // View shipment list and details.
         Route::middleware('permission:shipments.view')->group(function () {
             Route::apiResource('shipments', ShipmentController::class)
                 ->only(['index', 'show']);
         });
 
-        // Create, update and delete shipments.
         Route::middleware('permission:shipments.manage')->group(function () {
             Route::apiResource('shipments', ShipmentController::class)
                 ->only(['store', 'update', 'destroy']);
         });
+
         /*
         |--------------------------------------------------------------------------
         | Pricing
         |--------------------------------------------------------------------------
-        |
-        | IMPORTANT:
-        | /pricing/find must come before apiResource('pricing')
-        |
         */
 
-       // Keep /pricing/find before /pricing/{pricing}.
+        // Keep /pricing/find before /pricing/{pricing}.
         Route::get('/pricing/find', [PricingController::class, 'findRate'])
             ->middleware('permission:pricing.view');
 
@@ -252,10 +287,25 @@ Route::get('/customer/warehouse-addresses', [
         });
 
         Route::middleware('permission:cambodia_warehouse.manage')->group(function () {
-            Route::post('/cambodia-warehouse/packages/{id}/receive', [CambodiaWarehouseController::class, 'receive']);
-            Route::post('/cambodia-warehouse/packages/{id}/measure', [CambodiaWarehouseController::class, 'measure']);
-            Route::post('/cambodia-warehouse/packages/{id}/ready-for-billing', [CambodiaWarehouseController::class, 'readyForBilling']);
-            Route::post('/cambodia-warehouse/packages/{id}/customer-pickup', [CambodiaWarehouseController::class, 'confirmCustomerPickup']);
+            Route::post('/cambodia-warehouse/packages/{id}/receive', [
+                CambodiaWarehouseController::class,
+                'receive',
+            ]);
+
+            Route::post('/cambodia-warehouse/packages/{id}/measure', [
+                CambodiaWarehouseController::class,
+                'measure',
+            ]);
+
+            Route::post('/cambodia-warehouse/packages/{id}/ready-for-billing', [
+                CambodiaWarehouseController::class,
+                'readyForBilling',
+            ]);
+
+            Route::post('/cambodia-warehouse/packages/{id}/customer-pickup', [
+                CambodiaWarehouseController::class,
+                'confirmCustomerPickup',
+            ]);
         });
 
         /*
@@ -264,23 +314,45 @@ Route::get('/customer/warehouse-addresses', [
         |--------------------------------------------------------------------------
         */
 
-            Route::middleware('permission:containers.view')->group(function () {
-        Route::apiResource('containers', ContainerController::class)
-            ->only(['index', 'show']);
+        Route::middleware('permission:containers.view')->group(function () {
+            Route::apiResource('containers', ContainerController::class)
+                ->only(['index', 'show']);
 
-        Route::get('/containers/{id}/packages', [ContainerController::class, 'packages']);
-        Route::get('/containers/{id}/timeline', [ContainerController::class, 'timeline']);
-    });
+            Route::get('/containers/{id}/packages', [
+                ContainerController::class,
+                'packages',
+            ]);
+
+            Route::get('/containers/{id}/timeline', [
+                ContainerController::class,
+                'timeline',
+            ]);
+        });
 
         Route::middleware('permission:containers.manage')->group(function () {
-        Route::apiResource('containers', ContainerController::class)
-            ->only(['store', 'update', 'destroy']);
+            Route::apiResource('containers', ContainerController::class)
+                ->only(['store', 'update', 'destroy']);
 
-        Route::post('/containers/{id}/packages', [ContainerController::class, 'attachPackages']);
-        Route::delete('/containers/{id}/packages/{packageId}', [ContainerController::class, 'detachPackage']);
-        Route::put('/containers/{id}/location', [ContainerController::class, 'updateLocation']);
-        Route::post('/containers/{id}/transition', [ContainerController::class, 'transition']);
-    });
+            Route::post('/containers/{id}/packages', [
+                ContainerController::class,
+                'attachPackages',
+            ]);
+
+            Route::delete('/containers/{id}/packages/{packageId}', [
+                ContainerController::class,
+                'detachPackage',
+            ]);
+
+            Route::put('/containers/{id}/location', [
+                ContainerController::class,
+                'updateLocation',
+            ]);
+
+            Route::post('/containers/{id}/transition', [
+                ContainerController::class,
+                'transition',
+            ]);
+        });
 
         /*
         |--------------------------------------------------------------------------
@@ -289,17 +361,15 @@ Route::get('/customer/warehouse-addresses', [
         */
 
         Route::middleware('permission:tracking.view')->group(function () {
-        Route::get('/tracking/search', [TrackingController::class, 'search']);
-
-        Route::get('/tracking/{tracking}', [TrackingController::class, 'show']);
-    });
+            Route::get('/tracking/search', [TrackingController::class, 'search']);
+            Route::get('/tracking/{tracking}', [TrackingController::class, 'show']);
+        });
 
         Route::post('/tracking/events', [TrackingController::class, 'store'])
-        ->middleware('permission:tracking.manage');
+            ->middleware('permission:tracking.manage');
 
         Route::get('/test-data', [TestDataController::class, 'index'])
             ->middleware('permission:test-data.manage');
-
 
         /*
         |--------------------------------------------------------------------------
@@ -307,17 +377,20 @@ Route::get('/customer/warehouse-addresses', [
         |--------------------------------------------------------------------------
         */
 
-       Route::middleware('permission:quotation.view')->group(function () {
-        Route::apiResource('quotations', QuotationController::class)
-            ->only(['index', 'show']);
-    });
+        Route::middleware('permission:quotation.view')->group(function () {
+            Route::apiResource('quotations', QuotationController::class)
+                ->only(['index', 'show']);
+        });
 
-    Route::middleware('permission:quotation.manage')->group(function () {
-        Route::apiResource('quotations', QuotationController::class)
-            ->only(['store', 'update']);
+        Route::middleware('permission:quotation.manage')->group(function () {
+            Route::apiResource('quotations', QuotationController::class)
+                ->only(['store', 'update']);
 
-        Route::post('/quotations/{id}/accept', [QuotationController::class, 'accept']);
-    });
+            Route::post('/quotations/{id}/accept', [
+                QuotationController::class,
+                'accept',
+            ]);
+        });
 
         /*
         |--------------------------------------------------------------------------
@@ -325,32 +398,39 @@ Route::get('/customer/warehouse-addresses', [
         |--------------------------------------------------------------------------
         */
 
-        Route::get('/invoices', [InvoiceController::class, 'index'])->middleware('permission:invoice.view');
-        Route::get('/invoices/{id}', [InvoiceController::class, 'show'])->middleware('permission:invoice.view');
-        Route::post('/invoices', [InvoiceController::class, 'store'])->middleware('permission:invoice.create');
-        Route::put('/invoices/{id}', [InvoiceController::class, 'update'])->middleware('permission:invoice.create');
-        Route::patch('/invoices/{id}', [InvoiceController::class, 'update'])->middleware('permission:invoice.create');
-        Route::patch('/invoices/{id}/billing', [InvoiceController::class, 'updateBilling'])->middleware('permission:invoice.create');
+        Route::get('/invoices', [InvoiceController::class, 'index'])
+            ->middleware('permission:invoice.view');
+
+        Route::get('/invoices/{id}', [InvoiceController::class, 'show'])
+            ->middleware('permission:invoice.view');
+
+        Route::post('/invoices', [InvoiceController::class, 'store'])
+            ->middleware('permission:invoice.create');
+
+        Route::put('/invoices/{id}', [InvoiceController::class, 'update'])
+            ->middleware('permission:invoice.create');
+
+        Route::patch('/invoices/{id}', [InvoiceController::class, 'update'])
+            ->middleware('permission:invoice.create');
+
+        Route::patch('/invoices/{id}/billing', [InvoiceController::class, 'updateBilling'])
+            ->middleware('permission:invoice.create');
 
         /*
+        |--------------------------------------------------------------------------
         | Generate Invoice directly from Package
-        |
-        | Package
-        |   ↓
-        | Auto Pricing
-        |   ↓
-        | Generate Invoice
+        |--------------------------------------------------------------------------
         */
 
-        Route::post(
-            '/invoices/from-package/{packageId}',
-            [InvoiceController::class, 'fromPackage']
-        )->middleware('permission:invoice.create');
+        Route::post('/invoices/from-package/{packageId}', [
+            InvoiceController::class,
+            'fromPackage',
+        ])->middleware('permission:invoice.create');
 
-        Route::post(
-            '/invoices/from-packages',
-            [InvoiceController::class, 'fromPackages']
-        )->middleware('permission:invoice.create');
+        Route::post('/invoices/from-packages', [
+            InvoiceController::class,
+            'fromPackages',
+        ])->middleware('permission:invoice.create');
 
         /*
         |--------------------------------------------------------------------------
@@ -358,16 +438,33 @@ Route::get('/customer/warehouse-addresses', [
         |--------------------------------------------------------------------------
         */
 
-        Route::get('/payments', [PaymentController::class, 'index'])->middleware('permission:payment.view');
-        Route::get('/payments/{payment}', [PaymentController::class, 'show'])->middleware('permission:payment.view');
-        Route::post('/payments', [PaymentController::class, 'store'])->middleware('permission:payment.create');
+        Route::get('/payments', [PaymentController::class, 'index'])
+            ->middleware('permission:payment.view');
 
-        Route::get('/payments/{payment}/receipt', [FinanceController::class, 'receipt'])->middleware('permission:payment.view');
+        Route::get('/payments/{payment}', [PaymentController::class, 'show'])
+            ->middleware('permission:payment.view');
+
+        Route::post('/payments', [PaymentController::class, 'store'])
+            ->middleware('permission:payment.create');
+
+        Route::get('/payments/{payment}/receipt', [
+            FinanceController::class,
+            'receipt',
+        ])->middleware('permission:payment.view');
+
+        /*
+        |--------------------------------------------------------------------------
+        | Finance
+        |--------------------------------------------------------------------------
+        */
+
         Route::get('/finance/dashboard', [FinanceController::class, 'dashboard'])
             ->middleware('permission:finance.view');
 
-        Route::get('/finance/customers/{customerId}/statement', [FinanceController::class, 'statement'])
-            ->middleware('permission:finance.view');
+        Route::get('/finance/customers/{customerId}/statement', [
+            FinanceController::class,
+            'statement',
+        ])->middleware('permission:finance.view');
 
         /*
         |--------------------------------------------------------------------------
@@ -375,15 +472,15 @@ Route::get('/customer/warehouse-addresses', [
         |--------------------------------------------------------------------------
         */
 
-       Route::middleware('permission:income.view')->group(function () {
-        Route::apiResource('income', IncomeController::class)
-            ->only(['index', 'show']);
-    });
+        Route::middleware('permission:income.view')->group(function () {
+            Route::apiResource('income', IncomeController::class)
+                ->only(['index', 'show']);
+        });
 
-    Route::middleware('permission:income.manage')->group(function () {
-        Route::apiResource('income', IncomeController::class)
-            ->only(['store']);
-    });
+        Route::middleware('permission:income.manage')->group(function () {
+            Route::apiResource('income', IncomeController::class)
+                ->only(['store']);
+        });
 
         /*
         |--------------------------------------------------------------------------
@@ -391,9 +488,11 @@ Route::get('/customer/warehouse-addresses', [
         |--------------------------------------------------------------------------
         */
 
-        // Must be declared BEFORE the apiResource below or {expense} swallows it.
-        Route::get('/expenses/delivery-summary', [ExpenseController::class, 'deliverySummary'])
-            ->middleware('permission:expenses.view');
+        // Must be declared BEFORE apiResource('expenses').
+        Route::get('/expenses/delivery-summary', [
+            ExpenseController::class,
+            'deliverySummary',
+        ])->middleware('permission:expenses.view');
 
         Route::middleware('permission:expenses.view')->group(function () {
             Route::apiResource('expenses', ExpenseController::class)
@@ -407,35 +506,103 @@ Route::get('/customer/warehouse-addresses', [
 
         /*
         |--------------------------------------------------------------------------
+        | Cash Accounts
+        |--------------------------------------------------------------------------
+        */
+
+        Route::middleware('permission:cash.view')->group(function () {
+            Route::get('/cash/accounts', [
+                CashAccountController::class,
+                'index',
+            ]);
+
+            Route::get('/cash/accounts/{id}', [
+                CashAccountController::class,
+                'show',
+            ]);
+        });
+
+        Route::post('/cash/accounts', [
+            CashAccountController::class,
+            'store',
+        ])->middleware('permission:cash.manage');
+
+        /*
+        |--------------------------------------------------------------------------
+        | Cash Transactions
+        |--------------------------------------------------------------------------
+        */
+
+        Route::middleware('permission:cash.view')->group(function () {
+            Route::get('/cash/transactions', [
+                CashTransactionController::class,
+                'index',
+            ]);
+
+            Route::get('/cash/transactions/{id}', [
+                CashTransactionController::class,
+                'show',
+            ]);
+        });
+
+        // NEW: Create cash transaction (cash.manage only).
+        Route::post('/cash/transactions', [
+            CashTransactionController::class,
+            'store',
+        ])->middleware('permission:cash.manage');
+
+        /*
+        |--------------------------------------------------------------------------
         | CRM / Leads
         |--------------------------------------------------------------------------
         */
 
-        // View CRM leads.
         Route::middleware('permission:crm.view')->group(function () {
             Route::apiResource('crm/leads', LeadController::class)
                 ->only(['index', 'show']);
         });
 
-        // Create, update and delete CRM leads.
         Route::middleware('permission:crm.manage')->group(function () {
             Route::apiResource('crm/leads', LeadController::class)
                 ->only(['store', 'update', 'destroy']);
         });
-        // View delivery list and details.
+
+        /*
+        |--------------------------------------------------------------------------
+        | Deliveries
+        |--------------------------------------------------------------------------
+        */
+
         Route::middleware('permission:deliveries.view')->group(function () {
             Route::apiResource('deliveries', DeliveryController::class)
                 ->only(['index', 'show']);
         });
 
-        // Create and update deliveries.
         Route::middleware('permission:deliveries.manage')->group(function () {
             Route::apiResource('deliveries', DeliveryController::class)
                 ->only(['store', 'update']);
         });
-        Route::get('/notifications', [NotificationController::class, 'index']);
-        Route::get('/notifications/unread-count', [NotificationController::class, 'unreadCount']);
-        Route::post('/notifications/{id}/read', [NotificationController::class, 'markRead']);
+
+        /*
+        |--------------------------------------------------------------------------
+        | Notifications
+        |--------------------------------------------------------------------------
+        */
+
+        Route::get('/notifications', [
+            NotificationController::class,
+            'index',
+        ]);
+
+        Route::get('/notifications/unread-count', [
+            NotificationController::class,
+            'unreadCount',
+        ]);
+
+        Route::post('/notifications/{id}/read', [
+            NotificationController::class,
+            'markRead',
+        ]);
 
         /*
         |--------------------------------------------------------------------------
@@ -443,10 +610,10 @@ Route::get('/customer/warehouse-addresses', [
         |--------------------------------------------------------------------------
         */
 
-        Route::get(
-            '/dashboard',
-            [DashboardController::class, 'index']
-        )->middleware('permission:dashboard.view');
+        Route::get('/dashboard', [
+            DashboardController::class,
+            'index',
+        ])->middleware('permission:dashboard.view');
 
         /*
         |--------------------------------------------------------------------------
@@ -454,41 +621,52 @@ Route::get('/customer/warehouse-addresses', [
         |--------------------------------------------------------------------------
         */
 
-        Route::get('/audit-logs', [AuditLogController::class, 'index'])->middleware('permission:report.view');
+        Route::get('/audit-logs', [
+            AuditLogController::class,
+            'index',
+        ])->middleware('permission:report.view');
 
         Route::prefix('reports')->group(function () {
 
-            Route::get(
-                '/shipments',
-                [ReportController::class, 'shipments']
-            )->middleware('permission:report.view');
+            Route::get('/shipments', [
+                ReportController::class,
+                'shipments',
+            ])->middleware('permission:report.view');
 
-            Route::get(
-                '/customers',
-                [ReportController::class, 'customers']
-            )->middleware('permission:report.view');
+            Route::get('/customers', [
+                ReportController::class,
+                'customers',
+            ])->middleware('permission:report.view');
 
-            Route::get(
-                '/customer-finance',
-                [ReportController::class, 'customerFinance']
-            )->middleware('permission:report.view');
+            Route::get('/customer-finance', [
+                ReportController::class,
+                'customerFinance',
+            ])->middleware('permission:report.view');
 
-            Route::get(
-                '/sales',
-                [ReportController::class, 'sales']
-            )->middleware('permission:report.view');
+            Route::get('/sales', [
+                ReportController::class,
+                'sales',
+            ])->middleware('permission:report.view');
 
-            Route::get(
-                '/finance',
-                [ReportController::class, 'finance']
-            )->middleware('permission:report.view');
+            Route::get('/finance', [
+                ReportController::class,
+                'finance',
+            ])->middleware('permission:report.view');
 
-            Route::get(
-                '/warehouse',
-                [ReportController::class, 'warehouse']
-            )->middleware('permission:report.view');
-            Route::get('/deliveries', [ReportController::class, 'deliveries'])->middleware('permission:report.view');
-            Route::get('/dashboard', [ReportController::class, 'dashboard'])->middleware('permission:report.view');
+            Route::get('/warehouse', [
+                ReportController::class,
+                'warehouse',
+            ])->middleware('permission:report.view');
+
+            Route::get('/deliveries', [
+                ReportController::class,
+                'deliveries',
+            ])->middleware('permission:report.view');
+
+            Route::get('/dashboard', [
+                ReportController::class,
+                'dashboard',
+            ])->middleware('permission:report.view');
         });
     });
 });
