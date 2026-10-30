@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import {
   listCashAccounts,
   listCashTransactions,
+  createCashAccount,
 } from '../services/cashApi.js';
 
 const formatAmount = (amount, currency) => {
@@ -23,6 +24,60 @@ export default function CashManagement() {
   const [selectedAccount, setSelectedAccount] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [showAccountForm, setShowAccountForm] = useState(false);
+  const [savingAccount, setSavingAccount] = useState(false);
+  const [accountFormError, setAccountFormError] = useState('');
+  const [accountForm, setAccountForm] = useState({
+    name: '',
+    account_type: 'Cash',
+    currency: 'USD',
+    opening_balance: '0',
+  });
+
+  const submitAccount = async (event) => {
+    event.preventDefault();
+    if (savingAccount) return;
+
+    setAccountFormError('');
+    const name = accountForm.name.trim();
+    const currency = accountForm.currency.trim().toUpperCase();
+    const openingBalance = Number(accountForm.opening_balance);
+
+    if (!name || name.length > 150) {
+      setAccountFormError('Account Name must be 1–150 characters.');
+      return;
+    }
+    if (!/^[A-Z]{3}$/.test(currency)) {
+      setAccountFormError('Currency must contain 3 letters, e.g. USD or KHR.');
+      return;
+    }
+    if (!Number.isFinite(openingBalance) || openingBalance < 0) {
+      setAccountFormError('Opening Balance must be zero or greater.');
+      return;
+    }
+
+    setSavingAccount(true);
+    try {
+      await createCashAccount({
+        name,
+        account_type: accountForm.account_type,
+        currency,
+        opening_balance: openingBalance,
+      });
+      setAccountForm({
+        name: '',
+        account_type: 'Cash',
+        currency: 'USD',
+        opening_balance: '0',
+      });
+      setShowAccountForm(false);
+      await load();
+    } catch (err) {
+      setAccountFormError(err.message || 'Unable to create cash account.');
+    } finally {
+      setSavingAccount(false);
+    }
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -85,12 +140,88 @@ export default function CashManagement() {
       )}
 
       <section className="overflow-hidden rounded-2xl border bg-white">
-        <div className="border-b p-4">
-          <h3 className="font-bold">Cash / Bank Accounts</h3>
-          <p className="text-xs text-slate-500">
-            Opening balance only — not current available balance.
-          </p>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b p-4">
+          <div>
+            <h3 className="font-bold">Cash / Bank Accounts</h3>
+            <p className="text-xs text-slate-500">
+              Opening balance only — not current available balance.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setShowAccountForm((current) => !current);
+              setAccountFormError('');
+            }}
+            className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white"
+          >
+            {showAccountForm ? 'Cancel' : 'Add Cash/Bank Account'}
+          </button>
         </div>
+
+        {showAccountForm && (
+          <form onSubmit={submitAccount} className="grid gap-3 border-b bg-slate-50 p-4 md:grid-cols-2">
+            <label className="text-sm">
+              <span className="mb-1 block font-medium">Account Name</span>
+              <input
+                required
+                maxLength={150}
+                value={accountForm.name}
+                onChange={(e) => setAccountForm((current) => ({ ...current, name: e.target.value }))}
+                className="w-full rounded-lg border bg-white px-3 py-2"
+                placeholder="e.g. Main Cash"
+              />
+            </label>
+            <label className="text-sm">
+              <span className="mb-1 block font-medium">Account Type</span>
+              <select
+                value={accountForm.account_type}
+                onChange={(e) => setAccountForm((current) => ({ ...current, account_type: e.target.value }))}
+                className="w-full rounded-lg border bg-white px-3 py-2"
+              >
+                <option value="Cash">Cash</option>
+                <option value="Bank">Bank</option>
+              </select>
+            </label>
+            <label className="text-sm">
+              <span className="mb-1 block font-medium">Currency</span>
+              <input
+                required
+                maxLength={3}
+                value={accountForm.currency}
+                onChange={(e) => setAccountForm((current) => ({ ...current, currency: e.target.value.toUpperCase() }))}
+                className="w-full rounded-lg border bg-white px-3 py-2"
+                placeholder="USD"
+              />
+            </label>
+            <label className="text-sm">
+              <span className="mb-1 block font-medium">Opening Balance</span>
+              <input
+                required
+                type="number"
+                min="0"
+                step="0.0001"
+                value={accountForm.opening_balance}
+                onChange={(e) => setAccountForm((current) => ({ ...current, opening_balance: e.target.value }))}
+                className="w-full rounded-lg border bg-white px-3 py-2"
+              />
+            </label>
+            {accountFormError && (
+              <p role="alert" className="text-sm text-red-700 md:col-span-2">
+                {accountFormError}
+              </p>
+            )}
+            <div className="md:col-span-2">
+              <button
+                type="submit"
+                disabled={savingAccount}
+                className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+              >
+                {savingAccount ? 'Saving...' : 'Save Account'}
+              </button>
+            </div>
+          </form>
+        )}
 
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
