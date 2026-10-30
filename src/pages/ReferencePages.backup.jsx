@@ -42,60 +42,423 @@ export function AppUser(){
   const [role,setRole]=useState('');
   const [modal,setModal]=useState(null);
   const [saving,setSaving]=useState(false);
-  const [form,setForm]=useState({name:'',email:'',password:'',role:'Sales',permissions:[]});
-  const roles=['Super Admin','Admin','Finance','Accounting','Sales','Warehouse','Delivery'];
-  const permissions=['users.manage','invoice.view','invoice.create','invoice.print','invoice.download','payment.view','payment.create','report.view','billing.settings'];
+  const [form,setForm]=useState({
+    name:'',email:'',phone:'',department:'Sales',
+    password:'',role:'Sales',permissions:[]
+  });
+
+  const roles=['Admin','Finance','Accounting','Sales','Warehouse','Delivery'];
+  const departments=['Sales','Warehouse','Finance','Delivery','Customer Service','Admin','Management','Other'];
+  const permissionGroups = [
+  {
+    title: 'Dashboard & Approvals',
+    keys: ['dashboard.view', 'approvals.view']
+  },
+  {
+  title: 'CRM & Customers',
+  keys: [
+    'crm.view',
+    'crm.manage',
+    'customers.view',
+    'customers.manage'
+  ]
+},
+  {
+    title: 'Buying & Stock',
+    keys: ['buying.view', 'stock.view']
+  },
+  {
+    title: 'Sales & Pricing',
+    keys: ['selling.view', 'pricing.view', 'pricing.manage', 'quotation.view', 'quotation.manage']
+  },
+    {
+      title: 'Shipping & Delivery',
+      keys: [
+        'shipments.view',
+        'shipments.manage',
+        'shipping_modes.view',
+        'shipping_modes.manage',
+        'tracking.view',
+        'tracking.manage',
+        'deliveries.view',
+        'deliveries.manage'
+      ]
+    },
+  {
+    title: 'Warehouse Management',
+    keys: [
+      'warehouses.view',
+      'warehouses.manage',
+      'china_warehouse.view',
+      'china_sync.view',
+      'china_sync.manage',
+      'cambodia_warehouse.view',
+      'cambodia_warehouse.manage',
+      'containers.view',
+      'containers.manage'
+    ]
+  },
+  {
+    title: 'Reports & HR',
+    keys: ['report.view', 'hr.view']
+  },
+  {
+    title: 'System & Data',
+    keys: [
+      'data_import.manage',
+      'settings.manage',
+      'test-data.manage'
+    ]
+  }
+];
+
+const permissions = permissionGroups.flatMap(group => group.keys);
 
   const load=async()=>{
-    setLoading(true); setError('');
-    try { setUsersList(await userApi.list({search,role})); }
-    catch(e){ setError(e?.message||'Failed to load users'); }
-    finally { setLoading(false); }
-  };
-  React.useEffect(()=>{ load(); },[search,role]);
-
-  const openCreate=()=>{setForm({name:'',email:'',password:'',role:'Sales',permissions:[]});setModal('create');};
-  const openEdit=(u)=>{setForm({id:u.id,name:u.name||'',email:u.email||'',password:'',role:u.role||'Sales',permissions:u.permissions||[]});setModal('edit');};
-  const save=async()=>{
-    if(!form.name||!form.email||(modal==='create'&&!form.password)) return setError('Name, email and password are required for a new user.');
-    setSaving(true);setError('');
+    setLoading(true);
+    setError('');
     try{
-      const body={name:form.name,email:form.email,role:form.role,permissions:form.permissions};
+      setUsersList(await userApi.list({search,role}));
+    }catch(e){
+      setError(e?.message||'Failed to load staff');
+    }finally{
+      setLoading(false);
+    }
+  };
+
+  React.useEffect(()=>{load();},[search,role]);
+
+  const openCreate=()=>{
+    setError('');
+    setForm({
+      name:'',email:'',phone:'',department:'Sales',
+      password:'',role:'Sales',permissions:[]
+    });
+    setModal('create');
+  };
+
+  const openEdit=(u)=>{
+    setError('');
+    setForm({
+      id:u.id,
+      name:u.name||'',
+      email:u.email||'',
+      phone:u.phone||'',
+      department:u.department||'Other',
+      password:'',
+      role:u.role||'Sales',
+      permissions:Array.isArray(u.permissions)?u.permissions:[]
+    });
+    setModal('edit');
+  };
+
+  const save=async()=>{
+    if(!form.name.trim()||!form.phone.trim()||!form.department){
+    setError('Name, phone and department are required.');
+    return;
+    }
+
+    if(modal==='create'&&(!form.password||form.password.length<8)){
+      setError('A password of at least 8 characters is required for new staff.');
+      return;
+    }
+
+    setSaving(true);
+    setError('');
+    try{
+      const body={
+        name:form.name.trim(),
+        email:form.email.trim() || null,
+        phone:form.phone.trim(),
+        department:form.department,
+        role:form.role,
+        permissions:form.permissions
+      };
       if(modal==='create') body.password=form.password;
-      await (modal==='create'?userApi.create(body):userApi.update(form.id,body));
-      setModal(null); await load();
-    }catch(e){setError(e?.message||'Unable to save user');}finally{setSaving(false);}
+
+      await (modal==='create'
+        ? userApi.create(body)
+        : userApi.update(form.id,body));
+
+      setModal(null);
+      await load();
+    }catch(e){
+      setError(e?.message||'Unable to save staff');
+    }finally{
+      setSaving(false);
+    }
   };
-  const remove=async(u)=>{
-    if(!window.confirm(`Delete ${u.name}?`)) return;
-    try{await userApi.remove(u.id);await load();}catch(e){setError(e?.message||'Unable to delete user');}
-  };
+
+  const disableStaff=async(u)=>{
+  if(String(u.role||'').trim().toLowerCase()==='super admin'){
+    setError('Super Admin accounts cannot be disabled.');
+    return;
+  }
+
+  if(!window.confirm(`Disable ${u.name}? This staff member will lose access to the system.`)){
+    return;
+  }
+
+  setError('');
+
+  try{
+    await userApi.remove(u.id);
+    await load();
+  }catch(e){
+    setError(e?.message||'Unable to disable staff');
+  }
+};
+
+const enableStaff=async(u)=>{
+  if(String(u.role||'').trim().toLowerCase()==='super admin'){
+    setError('Super Admin accounts cannot be modified here.');
+    return;
+  }
+
+  if(!window.confirm(`Enable ${u.name}?`)){
+    return;
+  }
+
+  setError('');
+
+  try{
+    await userApi.update(u.id,{
+      name:u.name,
+      email:u.email||null,
+      phone:u.phone,
+      department:u.department,
+      role:u.role,
+      permissions:Array.isArray(u.permissions)?u.permissions:[],
+      is_active:true
+    });
+
+    await load();
+  }catch(e){
+    setError(e?.message||'Unable to enable staff');
+  }
+};
+
   const reset=async(u)=>{
     const password=window.prompt(`New password for ${u.name} (minimum 8 characters):`);
     if(!password) return;
-    try{await userApi.resetPassword(u.id,password);window.alert('Password reset successfully.');}catch(e){setError(e?.message||'Unable to reset password');}
+    if(password.length<8){
+      setError('Password must contain at least 8 characters.');
+      return;
+    }
+    try{
+      await userApi.resetPassword(u.id,password);
+      window.alert('Password reset successfully.');
+    }catch(e){
+      setError(e?.message||'Unable to reset password');
+    }
   };
-  const togglePermission=(name)=>setForm(f=>({...f,permissions:f.permissions.includes(name)?f.permissions.filter(x=>x!==name):[...f.permissions,name]}));
-  const active=usersList.filter(u=>String(u.status||'Active').toLowerCase()!=='inactive').length;
 
-  return <Page icon={Users} title="App User" subtitle="Manage system users, roles and access permissions" actions={<Button primary icon={Plus} onClick={openCreate}>Add User</Button>}>
+  const togglePermission=(name)=>setForm(f=>({
+    ...f,
+    permissions:f.permissions.includes(name)
+      ? f.permissions.filter(x=>x!==name)
+      : [...f.permissions,name]
+  }));
+
+  const active=usersList.filter(
+      u=>u.is_active===true
+    ).length;
+
+  return <Page
+    icon={Users}
+    title="HFL Logistics Staff Management"
+    subtitle="Manage staff profiles, departments, roles and individual access permissions"
+    actions={<Button primary icon={Plus} onClick={openCreate}>Add Staff</Button>}
+  >
     <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
-      <Stat icon={UserRound} title="Total Users" value={usersList.length}/>
-      <Stat icon={UserRound} title="Active Users" value={active} color="green"/>
-      <Stat icon={UserRound} title="Inactive Users" value={Math.max(0,usersList.length-active)} color="red"/>
+      <Stat icon={UserRound} title="Total Staff" value={usersList.length}/>
+      <Stat icon={UserRound} title="Active Staff" value={active} color="green"/>
+      <Stat icon={UserRound} title="Inactive Staff" value={Math.max(0,usersList.length-active)} color="red"/>
       <Stat icon={Crown} title="Administrators" value={usersList.filter(u=>['Super Admin','Admin'].includes(u.role)).length} color="purple"/>
     </div>
+
     {error&&<div className="bg-red-50 border border-red-200 text-red-700 rounded-lg p-3 text-sm">{error}</div>}
+
     <div className="bg-white border border-slate-200 rounded-xl p-3 flex flex-wrap gap-3 items-center">
-      <div className="h-10 flex-1 min-w-[220px] border border-slate-200 rounded-lg bg-white flex items-center gap-2 px-3"><Search size={17} className="text-slate-400"/><input value={search} onChange={e=>setSearch(e.target.value)} className="outline-none flex-1 text-sm" placeholder="Search name or email..."/></div>
-      <select value={role} onChange={e=>setRole(e.target.value)} className="h-10 border border-slate-200 rounded-lg px-3 text-sm"><option value="">All Roles</option>{roles.map(r=><option key={r}>{r}</option>)}</select>
+      <div className="h-10 flex-1 min-w-[220px] border border-slate-200 rounded-lg bg-white flex items-center gap-2 px-3">
+        <Search size={17} className="text-slate-400"/>
+        <input
+          value={search}
+          onChange={e=>setSearch(e.target.value)}
+          className="outline-none flex-1 text-sm"
+          placeholder="Search name, email, phone or department..."
+        />
+      </div>
+      <select value={role} onChange={e=>setRole(e.target.value)} className="h-10 border border-slate-200 rounded-lg px-3 text-sm">
+        <option value="">All Roles</option>
+        {roles.map(r=><option key={r} value={r}>{r}</option>)}
+      </select>
       <Button icon={RotateCcw} onClick={()=>{setSearch('');setRole('');}}>Reset</Button>
     </div>
-    <TableShell title="👤 User List" subtitle={loading?'Loading users...':`Showing ${usersList.length} users`}>
-      <div className="overflow-x-auto"><table className="w-full text-sm"><thead className="bg-slate-50 text-xs"><tr>{['#','Full Name','Email','Role','Permissions','Created At','Action'].map(h=><th key={h} className="text-left px-3 py-3">{h}</th>)}</tr></thead>
-      <tbody>{usersList.map((u,i)=><tr className="border-t" key={u.id}><td className="px-3 py-2">{i+1}</td><td className="px-3 py-2 font-semibold">{u.name}</td><td className="px-3 py-2">{u.email}</td><td className="px-3 py-2"><span className="px-2 py-1 rounded-full bg-blue-50 text-blue-600 text-xs font-semibold">{u.role}</span></td><td className="px-3 py-2 text-xs text-slate-500">{(u.permissions||[]).length?u.permissions.join(', '):'Role defaults'}</td><td className="px-3 py-2">{u.created_at?formatHflDateTime(u.created_at):'—'}</td><td className="px-3 py-2"><div className="flex gap-3 text-slate-500"><Pencil size={16} className="cursor-pointer hover:text-blue-600" onClick={()=>openEdit(u)}/><button className="text-xs hover:text-blue-600" onClick={()=>reset(u)}>Reset PW</button><button className="text-xs text-red-500 hover:text-red-700" onClick={()=>remove(u)}>Delete</button></div></td></tr>)}{!loading&&!usersList.length&&<tr><td colSpan="7" className="px-4 py-10 text-center text-slate-400">No users found.</td></tr>}</tbody></table></div>
+
+    <TableShell title="👥 Staff List" subtitle={loading?'Loading staff...':`Showing ${usersList.length} staff members`}>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-slate-50 text-xs">
+            <tr>
+             {['#','Full Name','Email','Phone','Department','Role','Status','Permissions','Created At','Action'].map(h=><th key={h} className="text-left px-3 py-3 whitespace-nowrap">{h}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {usersList.map((u,i)=><tr className="border-t" key={u.id}>
+              <td className="px-3 py-2">{i+1}</td>
+              <td className="px-3 py-2 font-semibold">{u.name}</td>
+              <td className="px-3 py-2">{u.email || '—'}</td>
+              <td className="px-3 py-2">{u.phone||'—'}</td>
+              <td className="px-3 py-2">{u.department||'—'}</td>
+              <td className="px-3 py-2">
+              <span className={`px-2 py-1 rounded-full text-xs font-semibold ${
+                u.is_active
+                  ? 'bg-green-50 text-green-700'
+                  : 'bg-red-50 text-red-700'
+              }`}>
+                {u.is_active ? 'Active' : 'Inactive'}
+              </span>
+            </td>
+              <td className="px-3 py-2 text-xs text-slate-500">{(u.permissions||[]).length?u.permissions.join(', '):'Role defaults'}</td>
+              <td className="px-3 py-2 whitespace-nowrap">{u.created_at?formatHflDateTime(u.created_at):'—'}</td>
+              <td className="px-3 py-2">
+                <div className="flex flex-wrap gap-3 text-slate-500">
+                {String(u.role||'').trim().toLowerCase()!=='super admin'&&(
+                <>
+                  <button
+                    type="button"
+                    className="text-xs hover:text-blue-600"
+                    onClick={()=>openEdit(u)}
+                  >
+                    Edit
+                  </button>
+
+                  <button
+                    type="button"
+                    className="text-xs hover:text-blue-600"
+                    onClick={()=>reset(u)}
+                  >
+                    Reset PW
+                  </button>
+
+                  {u.is_active?(
+                    <button
+                      type="button"
+                      className="text-xs text-red-500 hover:text-red-700"
+                      onClick={()=>disableStaff(u)}
+                    >
+                      Disable
+                    </button>
+                  ):(
+                    <button
+                      type="button"
+                      className="text-xs text-green-600 hover:text-green-700"
+                      onClick={()=>enableStaff(u)}
+                    >
+                      Enable
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
+              </td>
+            </tr>)}
+            {!loading&&!usersList.length&&<tr><td colSpan="10" className="px-4 py-10 text-center text-slate-400">No staff found.</td></tr>}
+          </tbody>
+        </table>
+      </div>
     </TableShell>
-    {modal&&<div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"><div className="bg-white rounded-2xl w-full max-w-xl shadow-xl"><div className="p-5 border-b flex items-center justify-between"><div><h3 className="font-bold text-lg">{modal==='create'?'Add User':'Edit User'}</h3><p className="text-xs text-slate-400">User data is saved through Laravel API.</p></div><button onClick={()=>setModal(null)}><XCircle/></button></div><div className="p-5 grid md:grid-cols-2 gap-4"><label className="text-sm">Full Name<input className="mt-1 w-full h-10 border rounded-lg px-3" value={form.name} onChange={e=>setForm({...form,name:e.target.value})}/></label><label className="text-sm">Email<input type="email" className="mt-1 w-full h-10 border rounded-lg px-3" value={form.email} onChange={e=>setForm({...form,email:e.target.value})}/></label><label className="text-sm">Role<select className="mt-1 w-full h-10 border rounded-lg px-3" value={form.role} onChange={e=>setForm({...form,role:e.target.value})}>{roles.map(r=><option key={r}>{r}</option>)}</select></label>{modal==='create'&&<label className="text-sm">Password<input type="password" className="mt-1 w-full h-10 border rounded-lg px-3" value={form.password} onChange={e=>setForm({...form,password:e.target.value})}/></label>}<div className="md:col-span-2"><div className="text-sm font-semibold mb-2">Permissions</div><div className="grid grid-cols-2 md:grid-cols-3 gap-2">{permissions.map(p=><label key={p} className="text-xs flex gap-2 items-center"><input type="checkbox" checked={form.permissions.includes(p)} onChange={()=>togglePermission(p)}/>{p}</label>)}</div></div></div><div className="p-5 border-t flex justify-end gap-2"><Button onClick={()=>setModal(null)}>Cancel</Button><Button primary onClick={save} disabled={saving}>{saving?'Saving...':'Save User'}</Button></div></div></div>}
+
+    {modal&&<div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4 overflow-y-auto">
+      <div className="bg-white rounded-2xl w-full max-w-2xl shadow-xl max-h-[90vh] overflow-y-auto">
+        <div className="p-5 border-b flex items-center justify-between">
+          <div>
+            <h3 className="font-bold text-lg">{modal==='create'?'Add Staff':'Edit Staff'}</h3>
+            <p className="text-xs text-slate-400">Staff data is saved through the existing Laravel API.</p>
+          </div>
+          <button onClick={()=>setModal(null)} aria-label="Close staff form"><XCircle/></button>
+        </div>
+
+        <div className="p-5 grid md:grid-cols-2 gap-4">
+          <label className="text-sm">Full Name *
+            <input required className="mt-1 w-full h-10 border rounded-lg px-3" value={form.name} onChange={e=>setForm({...form,name:e.target.value})}/>
+          </label>
+          <label className="text-sm">Email (Optional)
+            <input
+              type="email"
+              className="mt-1 w-full h-10 border rounded-lg px-3"
+              value={form.email}
+              onChange={e=>setForm({...form,email:e.target.value})}
+              placeholder="Enter email (optional)"
+            />
+          </label>
+          <label className="text-sm">Phone *
+            <input required type="tel" className="mt-1 w-full h-10 border rounded-lg px-3" value={form.phone} onChange={e=>setForm({...form,phone:e.target.value})} placeholder="Enter phone number"/>
+          </label>
+          <label className="text-sm">Department *
+            <select required className="mt-1 w-full h-10 border rounded-lg px-3" value={form.department} onChange={e=>setForm({...form,department:e.target.value})}>
+              {departments.map(d=><option key={d} value={d}>{d}</option>)}
+            </select>
+          </label>
+          <label className="text-sm">Role *
+            <select className="mt-1 w-full h-10 border rounded-lg px-3" value={form.role} onChange={e=>setForm({...form,role:e.target.value})}>
+              {roles.map(r=><option key={r} value={r}>{r}</option>)}
+            </select>
+          </label>
+          {modal==='create'&&<label className="text-sm">Password *
+            <input required minLength={8} type="password" autoComplete="new-password" className="mt-1 w-full h-10 border rounded-lg px-3" value={form.password} onChange={e=>setForm({...form,password:e.target.value})}/>
+            <span className="block text-xs text-slate-400 mt-1">At least 8 characters</span>
+          </label>}
+
+          <div className="md:col-span-2">
+  <div className="text-sm font-semibold mb-2">
+    Staff Module Permissions
+  </div>
+
+  <p className="text-xs text-slate-500 mb-4">
+    Select which modules and actions this staff member can access.
+  </p>
+
+  <div className="space-y-4">
+    {permissionGroups.map(group => (
+      <div
+        key={group.title}
+        className="border border-slate-200 rounded-xl p-4"
+      >
+        <h4 className="text-sm font-semibold text-slate-800 mb-3">
+          {group.title}
+        </h4>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {group.keys.map(permission => (
+            <label
+              key={permission}
+              className="flex items-center gap-2 text-xs text-slate-700"
+            >
+              <input
+                type="checkbox"
+                checked={form.permissions.includes(permission)}
+                onChange={() => togglePermission(permission)}
+                className="h-4 w-4"
+              />
+
+              <span>{permission}</span>
+            </label>
+          ))}
+        </div>
+      </div>
+    ))}
+  </div>
+</div>
+        </div>
+
+        <div className="p-5 border-t flex justify-end gap-2">
+          <Button onClick={()=>setModal(null)}>Cancel</Button>
+          <Button primary onClick={save} disabled={saving}>{saving?'Saving...':modal==='create'?'Create Staff':'Save Changes'}</Button>
+        </div>
+      </div>
+    </div>}
   </Page>;
 }
 const customers=[['HFL9168-JPZ','ABC Trading Co., Ltd.','Agency','China','+86 138 0012 3456','abc@trading.com','Active','2025-08-20'],['KNG8688-JPZ','Sokha Store','End User','Cambodia','+855 12 345 678','sokha.store@gmail.com','Active','2025-08-18'],['HFL7015-JPZ','Modern Home','Commercial','Cambodia','+855 98 765 432','modernhome@gmail.com','Active','2025-08-15'],['HFL8791','Ching Shop','Individual','China','+86 139 8765 4321','ching@qq.com','Active','2025-08-12'],['HFL6177','Ratha Import','Government','Cambodia','+855 77 123 456','ratha@gov.kh','Active','2025-08-10'],['HFL8640','Dara electronics','Commercial','Cambodia','+855 96 654 321','dara.elec@gmail.com','Active','2025-08-08'],['HFL8792-JPZ','Virak Buntham','Agency','Cambodia','+855 88 222 333','info@vbexpress.com','Active','2025-08-05'],['HFL8783','Samnang Retail','End User','Cambodia','+855 12 987 654','samnang.retail@gmail.com','Inactive','2025-08-03'],['HFL8772','Kimly Market','Individual','Cambodia','+855 70 888 222','kimly168@gmail.com','Active','2025-07-28'],['YW-HFL8633-JPZ','Yiwu Supplier','Commercial','China','+86 137 1234 5678','supplier@yiwu.com','Active','2025-07-25']];
@@ -110,4 +473,248 @@ export function PricingList(){return <Page icon={Tag} title="HFL Pricing List" s
 const modes=[['AIR','Air Freight','✈','Air transportation for fast delivery (suitable for urgent cargo)','Active'],['SEA','Sea Freight','⚓','Sea transportation for large volume cargo (economical)','Active'],['LAND','Land Freight','🚚','Land transportation via truck (China - Cambodia)','Active'],['EXPRESS','Express Delivery','📦','Express courier service (small parcel)','Active'],['SPECIAL','Special Goods','⚠','Special cargo (battery, liquid, chemical, etc.)','Active']];
 export function ShippingMode(){return <Page icon={Truck} title="Shipping Mode" subtitle="Manage shipping modes and their configurations" actions={<Button primary icon={Plus}>Add Shipping Mode</Button>}><div className="grid grid-cols-2 xl:grid-cols-5 gap-3"><Stat icon={Truck} title="Total Shipping Modes" value="5"/><Stat icon={Plane} title="Air Freight" value="1" color="green" delta="0%"/><Stat icon={Ship} title="Sea Freight" value="1" color="blue" delta="0%"/><Stat icon={Truck} title="Land Freight" value="1" color="green" delta="0%"/><Stat icon={Package} title="Express / Small Parcel" value="2" color="purple" delta="0%"/></div><FilterBar><SearchBox placeholder="Search shipping mode name or code..."/><Select label="Status">All Status</Select></FilterBar><TableShell title="🚚  Shipping Mode List" subtitle="Showing 1 - 5 of 5 shipping modes"><div className="overflow-x-auto"><table className="w-full text-sm"><thead className="bg-slate-50 text-xs"><tr>{['',' #','Mode Code','Mode Name','Icon','Description','Status','Created At','Action'].map(h=><th key={h} className="text-left px-3 py-3">{h}</th>)}</tr></thead><tbody>{modes.map((r,i)=><tr className="border-t" key={i}><td className="px-3 py-2"><input type="checkbox"/></td><td className="px-3 py-2">{i+1}</td>{r.map((v,j)=><td key={j} className="px-3 py-2">{j===4?<Status value={v}/>:v}</td>)}<td className="px-3 py-2"><Actions/></td></tr>)}</tbody></table></div><Pagination total="1"/></TableShell><div className="bg-white border rounded-xl p-5"><div className="flex items-center justify-between"><div><h3 className="font-bold text-slate-800">Mode Details</h3><div className="flex items-center gap-3 mt-3"><div className="w-12 h-12 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center"><Plane/></div><div><b>Air Freight</b> <Status value="Active"/><p className="text-sm text-slate-400">Fast and reliable air transportation</p></div></div></div><Button icon={Pencil}>Edit</Button></div><div className="grid grid-cols-2 md:grid-cols-5 gap-2 mt-4"><div className="bg-slate-50 p-3 rounded-lg"><small>Mode Code</small><b className="block mt-1">AIR</b></div><div className="bg-slate-50 p-3 rounded-lg"><small>Default Currency</small><b className="block mt-1">USD</b></div><div className="bg-slate-50 p-3 rounded-lg"><small>Typical Transit Time</small><b className="block mt-1">3 - 7 days</b></div><div className="bg-slate-50 p-3 rounded-lg"><small>Minimum Charge</small><b className="block mt-1">$100.00</b></div><div className="bg-slate-50 p-3 rounded-lg"><small>Description</small><b className="block mt-1 text-xs">Air transportation for fast delivery</b></div></div></div></Page>}
 
-export function HFLSettings(){const [saved,setSaved]=useState(false);return <Page icon={Settings} title="HFL Settings" subtitle="Configure system settings, preferences and operational parameters"><div className="bg-white border rounded-xl overflow-hidden"><div className="flex flex-wrap gap-1 p-2 border-b">{['General','Company','Warehouse','Shipping','Pricing','Tracking','Notifications','Integrations','Security','System'].map((x,i)=><button key={x} className={cn('px-4 py-2.5 rounded-lg text-sm font-semibold',i===0?'bg-blue-50 text-blue-600':'text-slate-600')}>{x}</button>)}</div><div className="grid grid-cols-2 xl:grid-cols-4 gap-3 p-3"><Stat icon={Building2} title="Company Profile" value="HFL Logistics Co., Ltd." color="blue" delta="Configured"/><Stat icon={Building2} title="Warehouses" value="3 Warehouses" color="green" delta="Active"/><Stat icon={Truck} title="Shipping Modes" value="5 Modes" color="blue" delta="Configured"/><Stat icon={CircleDollarSign} title="Pricing Rules" value="48 Price Items" color="green" delta="Active"/></div></div><div className="grid lg:grid-cols-5 gap-4"><div className="lg:col-span-3 bg-white border rounded-xl p-4"><div className="flex items-center justify-between"><div><h3 className="font-bold">⚙️ General Information</h3><p className="text-xs text-slate-400">Basic system information and company details</p></div><Button primary icon={Save} onClick={()=>setSaved(true)}>{saved?'Saved':'Save Changes'}</Button></div><div className="grid md:grid-cols-2 gap-4 mt-5"><div><label className="text-xs">Company Name *</label><input className="mt-1 w-full h-10 border rounded-lg px-3" value="HIGH FAST LOGISTICS CO., LTD." readOnly/><label className="text-xs block mt-4">Company Code *</label><input className="mt-1 w-full h-10 border rounded-lg px-3" value="HFL" readOnly/><label className="text-xs block mt-4">Company Logo</label><div className="h-28 mt-2 rounded-lg bg-slate-50 flex items-center justify-center text-blue-600 font-bold text-xl">HFL<br/><small>HIGH FAST LOGISTICS</small></div></div><div><Select label="Default Language">English</Select><div className="mt-3"><Select label="Default Currency">USD - US Dollar</Select></div><div className="mt-3"><Select label="Time Zone">(GMT+07:00) Phnom Penh</Select></div><div className="mt-3"><Select label="Date Format">YYYY-MM-DD</Select></div><div className="mt-3"><Select label="Time Format">24-hour (HH:mm)</Select></div></div></div></div><div className="lg:col-span-2 bg-white border rounded-xl p-4"><div className="flex items-center justify-between"><div><h3 className="font-bold">⚙️ System Preferences</h3><p className="text-xs text-slate-400">Configure system behavior and default settings</p></div><Button primary>Save Changes</Button></div>{['Enable Email Notifications','Enable SMS Notifications','Auto-generate Tracking Number','Require Approval for Pricing Changes','Enable Customer Self-Registration','Enable Maintenance Mode'].map((x,i)=><div className="flex items-center justify-between py-3 border-b last:border-0" key={x}><div><b className="text-sm">{x}</b><p className="text-xs text-slate-400">{['Send email notifications for important events','Send SMS notifications for tracking updates','Automatically generate tracking numbers for new packages','Require admin approval for pricing modifications','Allow customers to register accounts','Temporarily disable system for maintenance'][i]}</p></div><div className={cn('w-10 h-6 rounded-full p-0.5',i<3?'bg-blue-600':'bg-slate-300')}><div className="w-5 h-5 bg-white rounded-full ml-auto"/></div></div>)}</div></div><div className="grid lg:grid-cols-2 gap-4"><div className="bg-white border rounded-xl p-4"><h3 className="font-bold">📞 Contact Information</h3><div className="grid grid-cols-2 gap-4 mt-4 text-sm"><p><Mail size={15} className="inline mr-2 text-blue-600"/>info@hfl.com</p><p><Globe2 size={15} className="inline mr-2 text-blue-600"/>https://www.hfl.com</p><p><Phone size={15} className="inline mr-2 text-blue-600"/>+855 12 345 678</p><p><MapPin size={15} className="inline mr-2 text-blue-600"/>Phnom Penh, Cambodia</p></div></div><div className="bg-white border rounded-xl p-4"><h3 className="font-bold">🛠 Quick Actions</h3><div className="grid grid-cols-2 gap-2 mt-4"><Button icon={RefreshCw}>Clear Cache</Button><Button icon={Database}>Backup Database</Button><Button icon={FileSpreadsheet}>View System Logs</Button><Button icon={RotateCcw}>Restore Database</Button></div></div></div></Page>}
+export function HFLSettings(){
+  const [activeTab,setActiveTab]=useState('General');
+  const [saved,setSaved]=useState(false);
+
+  const tabs=[
+    'General','Company','Warehouse','Shipping','Pricing',
+    'Tracking','Notifications','Integrations','Security','System'
+  ];
+
+  const handleSave=()=>{
+    setSaved(true);
+    setTimeout(()=>setSaved(false),2000);
+  };
+
+  return (
+    <Page
+      icon={Settings}
+      title="HFL Settings"
+      subtitle="Configure system settings, preferences and operational parameters"
+    >
+      <div className="bg-white border rounded-xl overflow-hidden">
+
+        <div className="flex flex-wrap gap-1 p-2 border-b">
+          {tabs.map((tab)=>(
+            <button
+              key={tab}
+              type="button"
+              onClick={()=>setActiveTab(tab)}
+              className={cn(
+                'px-4 py-2.5 rounded-lg text-sm font-semibold',
+                activeTab===tab
+                  ? 'bg-blue-50 text-blue-600'
+                  : 'text-slate-600 hover:bg-slate-50'
+              )}
+            >
+              {tab}
+            </button>
+          ))}
+        </div>
+
+        {activeTab==='General' && (
+          <>
+            <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 p-3">
+              <Stat icon={Building2} title="Company Profile" value="HFL Logistics Co., Ltd." color="blue" delta="Configured"/>
+              <Stat icon={Building2} title="Warehouses" value="3 Warehouses" color="green" delta="Active"/>
+              <Stat icon={Truck} title="Shipping Modes" value="5 Modes" color="blue" delta="Configured"/>
+              <Stat icon={CircleDollarSign} title="Pricing Rules" value="48 Price Items" color="green" delta="Active"/>
+            </div>
+
+            <div className="grid lg:grid-cols-5 gap-4 p-4">
+
+              <div className="lg:col-span-3 bg-white border rounded-xl p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="font-bold">⚙️ General Information</h3>
+                    <p className="text-xs text-slate-400">
+                      Basic system information and company details
+                    </p>
+                  </div>
+
+                  <Button primary icon={Save} onClick={handleSave}>
+                    {saved ? 'Saved' : 'Save Changes'}
+                  </Button>
+                </div>
+
+                <div className="grid md:grid-cols-2 gap-4 mt-5">
+                  <div>
+                    <label className="text-xs">Company Name *</label>
+                    <input
+                      className="mt-1 w-full h-10 border rounded-lg px-3"
+                      value="HIGH FAST LOGISTICS CO., LTD."
+                      readOnly
+                    />
+
+                    <label className="text-xs block mt-4">
+                      Company Code *
+                    </label>
+                    <input
+                      className="mt-1 w-full h-10 border rounded-lg px-3"
+                      value="HFL"
+                      readOnly
+                    />
+
+                    <label className="text-xs block mt-4">
+                      Company Logo
+                    </label>
+                    <div className="h-28 mt-2 rounded-lg bg-slate-50 flex items-center justify-center text-blue-600 font-bold text-xl text-center">
+                      HFL<br/>
+                      <small>HIGH FAST LOGISTICS</small>
+                    </div>
+                  </div>
+
+                  <div>
+                    <Select label="Default Language">English</Select>
+
+                    <div className="mt-3">
+                      <Select label="Default Currency">
+                        USD - US Dollar
+                      </Select>
+                    </div>
+
+                    <div className="mt-3">
+                      <Select label="Time Zone">
+                        (GMT+07:00) Phnom Penh
+                      </Select>
+                    </div>
+
+                    <div className="mt-3">
+                      <Select label="Date Format">
+                        YYYY-MM-DD
+                      </Select>
+                    </div>
+
+                    <div className="mt-3">
+                      <Select label="Time Format">
+                        24-hour (HH:mm)
+                      </Select>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="lg:col-span-2 bg-white border rounded-xl p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="font-bold">⚙️ System Preferences</h3>
+                    <p className="text-xs text-slate-400">
+                      Configure system behavior and default settings
+                    </p>
+                  </div>
+
+                  <Button primary>Save Changes</Button>
+                </div>
+
+                {[
+                  'Enable Email Notifications',
+                  'Enable SMS Notifications',
+                  'Auto-generate Tracking Number',
+                  'Require Approval for Pricing Changes',
+                  'Enable Customer Self-Registration',
+                  'Enable Maintenance Mode'
+                ].map((x,i)=>(
+                  <div
+                    className="flex items-center justify-between py-3 border-b last:border-0"
+                    key={x}
+                  >
+                    <div>
+                      <b className="text-sm">{x}</b>
+                      <p className="text-xs text-slate-400">
+                        {[
+                          'Send email notifications for important events',
+                          'Send SMS notifications for tracking updates',
+                          'Automatically generate tracking numbers for new packages',
+                          'Require admin approval for pricing modifications',
+                          'Allow customers to register accounts',
+                          'Temporarily disable system for maintenance'
+                        ][i]}
+                      </p>
+                    </div>
+
+                    <div className={cn(
+                      'w-10 h-6 rounded-full p-0.5',
+                      i<3 ? 'bg-blue-600' : 'bg-slate-300'
+                    )}>
+                      <div className="w-5 h-5 bg-white rounded-full ml-auto"/>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid lg:grid-cols-2 gap-4 p-4 pt-0">
+              <div className="bg-white border rounded-xl p-4">
+                <h3 className="font-bold">📞 Contact Information</h3>
+
+                <div className="grid grid-cols-2 gap-4 mt-4 text-sm">
+                  <p>
+                    <Mail size={15} className="inline mr-2 text-blue-600"/>
+                    info@hfl.com
+                  </p>
+
+                  <p>
+                    <Globe2 size={15} className="inline mr-2 text-blue-600"/>
+                    https://www.hfl.com
+                  </p>
+
+                  <p>
+                    <Phone size={15} className="inline mr-2 text-blue-600"/>
+                    +855 12 345 678
+                  </p>
+
+                  <p>
+                    <MapPin size={15} className="inline mr-2 text-blue-600"/>
+                    Phnom Penh, Cambodia
+                  </p>
+                </div>
+              </div>
+
+              <div className="bg-white border rounded-xl p-4">
+                <h3 className="font-bold">🛠 Quick Actions</h3>
+
+                <div className="grid grid-cols-2 gap-2 mt-4">
+                  <Button icon={RefreshCw}>Clear Cache</Button>
+                  <Button icon={Database}>Backup Database</Button>
+                  <Button icon={FileSpreadsheet}>View System Logs</Button>
+                  <Button icon={RotateCcw}>Restore Database</Button>
+                </div>
+              </div>
+            </div>
+          </>
+        )}
+
+        {activeTab==='Warehouse' && (
+          <div className="p-4">
+            <WarehouseManagement />
+          </div>
+        )}
+
+        {!['General','Warehouse'].includes(activeTab) && (
+          <div className="p-10">
+            <div className="max-w-xl mx-auto text-center">
+              <div className="w-16 h-16 mx-auto rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center">
+                <Settings size={30}/>
+              </div>
+
+              <h3 className="text-lg font-bold text-slate-800 mt-4">
+                {activeTab} Settings
+              </h3>
+
+              <p className="text-sm text-slate-400 mt-2">
+                Configuration for {activeTab.toLowerCase()} settings
+                will be available in a future version.
+              </p>
+
+              <div className="mt-5 inline-flex items-center px-4 py-2 rounded-lg bg-slate-50 text-slate-500 text-sm">
+                Coming Soon
+              </div>
+            </div>
+          </div>
+        )}
+
+      </div>
+    </Page>
+  );
+}
