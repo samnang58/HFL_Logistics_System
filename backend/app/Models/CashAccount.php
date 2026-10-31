@@ -8,6 +8,7 @@ class CashAccount extends BaseModel
 {
     protected $casts = [
         'opening_balance' => 'decimal:4',
+        'opening_balance_date' => 'date',
         'is_active' => 'boolean',
     ];
 

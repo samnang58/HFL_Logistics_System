@@ -25,6 +25,7 @@ use App\Http\Controllers\IncomeController;
 use App\Http\Controllers\ExpenseController;
 use App\Http\Controllers\CashAccountController;
 use App\Http\Controllers\CashTransactionController;
+use App\Http\Controllers\FinancialClosingController;
 use App\Http\Controllers\LeadController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\ReportController;
@@ -457,6 +458,26 @@ Route::prefix('v1')->group(function () {
         | Finance
         |--------------------------------------------------------------------------
         */
+
+        Route::get('/finance/closings/export', [
+            FinancialClosingController::class,
+            'export',
+        ])->middleware('permission:finance.view');
+
+        Route::get('/finance/closings', [
+            FinancialClosingController::class,
+            'index',
+        ])->middleware('permission:finance.view');
+
+        Route::post('/finance/closings', [
+            FinancialClosingController::class,
+            'store',
+        ])->middleware('permission:finance.close');
+
+        Route::post('/finance/closings/{closing}/reopen', [
+            FinancialClosingController::class,
+            'reopen',
+        ])->middleware('permission:finance.reopen');
 
         Route::get('/finance/dashboard', [FinanceController::class, 'dashboard'])
             ->middleware('permission:finance.view');
