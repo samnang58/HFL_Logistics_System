@@ -15,6 +15,10 @@ use Illuminate\Support\Facades\DB;
 
 class InvoiceController extends CrudController
 {
+    // Keep the rest of your existing code here.
+
+
+
     protected string $model = Invoice::class;
 
     protected array $rules = [
@@ -29,6 +33,15 @@ class InvoiceController extends CrudController
         'meta' => 'nullable|array',
     ];
 
+    private function isVoided($status): bool
+    {
+        return in_array(
+            strtolower(trim((string) $status)),
+            ['void', 'voided', 'cancelled'],
+            true
+        );
+    }
+
     protected function searchColumns(): array
     {
         return [
@@ -39,113 +52,373 @@ class InvoiceController extends CrudController
         ];
     }
 
+    // --------------------------------------------------------
+    // INVOICE LIST
+    // --------------------------------------------------------
+
     public function index(Request $r)
     {
         $q = Invoice::query()->where('is_test', false);
 
+        // Hide voided bills by default.
+        // Use ?include_void=1 to display all.
+        if (!$r->boolean('include_void')) {
+            $q->whereNotIn('status', [
+                'Void', 'Voided', 'Cancelled',
+            ]);
+        }
+
+        if ($r->filled('status')) {
+            $q->where('status', $r->input('status'));
+        }
+
         if ($r->filled('search')) {
-            $s = $r->string('search');
-            $q->where(function ($x) use ($s) {
-                foreach ($this->searchColumns() as $c) {
-                    $x->orWhere($c, 'like', '%' . $s . '%');
+            $s = (string) $r->input('search');
+
+            $q->where(function ($query) use ($s) {
+                foreach ($this->searchColumns() as $column) {
+                    $query->orWhere(
+                        $column,
+                        'like',
+                        '%' . $s . '%'
+                    );
                 }
             });
         }
 
-        return $this->ok($q->latest()->paginate((int) $r->input('per_page', 25)));
+        $perPage = max(
+            1,
+            min(100, (int) $r->input('per_page', 25))
+        );
+
+        return $this->ok(
+            $q->latest()->paginate($perPage)
+        );
     }
+
+    // --------------------------------------------------------
+    // UPDATE INVOICE - PRESERVE EXISTING CRUD BEHAVIOR
+    // --------------------------------------------------------
 
     public function update(Request $request, $id)
     {
-        $invoice = Invoice::where('is_test', false)->findOrFail($id);
-        $rules = $this->rules;
+        $invoice = Invoice::where('is_test', false)
+            ->findOrFail($id);
 
-        foreach ($rules as $key => $rule) {
-            $rules[$key] = str_replace('required|', '', $rule);
+        if ($this->isVoided($invoice->status)) {
+            return $this->fail(
+                'Void invoices cannot be edited.',
+                [],
+                422
+            );
         }
 
-        $invoice->update($request->validate($rules));
+        $rules = $this->rules;
 
-        return $this->ok($invoice, 'Updated');
+        // Never let a generic update bypass the Void workflow.
+        unset($rules['status']);
+
+        foreach ($rules as $key => $rule) {
+            $rules[$key] = str_replace(
+                'required|',
+                '',
+                $rule
+            );
+        }
+
+        $invoice->update(
+            $request->validate($rules)
+        );
+
+        return $this->ok(
+            $invoice->fresh(),
+            'Updated'
+        );
     }
+
+    // --------------------------------------------------------
+    // VOID BILL - NEW FUNCTION
+    // --------------------------------------------------------
+
+    public function void(Request $request, $id)
+    {
+        $data = $request->validate([
+            'reason' => 'required|string|min:5|max:1000',
+        ]);
+
+        return DB::transaction(function () use ($data, $id) {
+            $invoice = Invoice::where('is_test', false)
+                ->lockForUpdate()
+                ->findOrFail($id);
+
+            if ($this->isVoided($invoice->status)) {
+                return $this->fail(
+                    'This invoice is already void or cancelled.',
+                    [],
+                    422
+                );
+            }
+
+            // Do not void invoices with payment history.
+            // Check all payment records, including test-marked
+            // records, to avoid accidentally losing references.
+            $hasPayments = Payment::where(
+                'invoice_id',
+                $invoice->id
+            )->exists();
+
+            $paidAmount = (float) (
+                $invoice->paid_amount ?? 0
+            );
+
+            if ($hasPayments || $paidAmount > 0) {
+                return $this->fail(
+                    'This invoice has payment history. '
+                    . 'Resolve the payment with Finance before voiding.',
+                    [],
+                    422
+                );
+            }
+
+            $reason = trim($data['reason']);
+
+            // Preserve the original bill amounts for audit.
+            $meta = is_array($invoice->meta)
+                ? $invoice->meta
+                : [];
+
+            $meta['void'] = [
+                'reason' => $reason,
+                'voided_at' => now()->toIso8601String(),
+                'voided_by_id' => auth()->id(),
+                'voided_by_name' =>
+                    auth()->user()?->name ?? 'System',
+                'original_status' =>
+                    (string) $invoice->status,
+                'original_grand_total' =>
+                    (float) $invoice->grand_total,
+                'original_outstanding' =>
+                    (float) $invoice->outstanding,
+                'original_paid_amount' =>
+                    $paidAmount,
+            ];
+
+            $invoice->meta = $meta;
+            $invoice->status = 'Void';
+            $invoice->outstanding = 0;
+
+            // Keep grand_total, items, invoice number and
+            // pricing snapshot unchanged for audit.
+            $invoice->save();
+
+            // Extract every package linked to this invoice,
+            // including combined invoices.
+            $items = is_array($invoice->items)
+                ? $invoice->items
+                : [];
+
+            $packageIds = collect($items)
+                ->filter(fn ($item) => is_array($item))
+                ->pluck('package_id')
+                ->filter()
+                ->unique()
+                ->values();
+
+            foreach ($packageIds as $packageId) {
+                $package = Package::whereKey($packageId)
+                    ->lockForUpdate()
+                    ->first();
+
+                if (!$package) {
+                    continue;
+                }
+
+                // Do not modify delivered, returned or
+                // other completed operational statuses.
+                if ((string) $package->status !== 'Invoiced') {
+                    continue;
+                }
+
+                // Do not reset a package if another active
+                // invoice is already linked to it.
+                $hasOtherActiveInvoice = Invoice::query()
+                    ->where('is_test', false)
+                    ->where('id', '!=', $invoice->id)
+                    ->whereNotIn('status', [
+                        'Void', 'Voided', 'Cancelled',
+                    ])
+                    ->get()
+                    ->contains(function ($other) use ($package) {
+                        $otherItems = is_array($other->items)
+                            ? $other->items
+                            : [];
+
+                        return collect($otherItems)->contains(
+                            fn ($item) =>
+                                is_array($item)
+                                && (string) (
+                                    $item['package_id'] ?? ''
+                                ) === (string) $package->id
+                        );
+                    });
+
+                if ($hasOtherActiveInvoice) {
+                    continue;
+                }
+
+                $package->status = 'Ready for Billing';
+                $package->save();
+
+                TrackingEvent::create([
+                    'tracking_number' =>
+                        $package->tracking_number,
+                    'package_id' => $package->id,
+                    'status' => 'Ready for Billing',
+                    'location' =>
+                        $package->warehouse_location
+                        ?: 'Cambodia Warehouse',
+                    'warehouse' => 'Cambodia Warehouse',
+                    'staff_name' =>
+                        auth()->user()?->name ?? 'Billing',
+                    'note' =>
+                        'Invoice ' . $invoice->invoice_no
+                        . ' voided. Reason: ' . $reason,
+                    'event_at' => now(),
+                ]);
+            }
+
+            return $this->ok(
+                $invoice->fresh(),
+                'Invoice voided successfully. '
+                . 'Original bill retained for audit.'
+            );
+        });
+    }
+
+    // --------------------------------------------------------
+    // DISABLE PERMANENT DELETE
+    // --------------------------------------------------------
 
     public function destroy($id)
     {
-        $invoice = Invoice::where('is_test', false)->findOrFail($id);
-        $invoice->delete();
-
-        return $this->ok(null, 'Deleted');
+        return $this->fail(
+            'Permanent invoice deletion is disabled. '
+            . 'Use Void Bill instead.',
+            [],
+            405
+        );
     }
+
+    // --------------------------------------------------------
+    // SHOW INVOICE WITH PAYMENT HISTORY
+    // --------------------------------------------------------
 
     public function show($id)
     {
-        $invoice = Invoice::where('is_test', false)->findOrFail($id);
+        $invoice = Invoice::where('is_test', false)
+            ->findOrFail($id);
 
         $payments = Payment::where('is_test', false)
             ->where('invoice_id', $invoice->id)
             ->orderByDesc('paid_at')
             ->get();
 
-        // Normalize display-only shipping item fields from the current package.
-        // Do not save the invoice or change any billing amounts.
-        $items = is_array($invoice->items) ? $invoice->items : [];
+        // Display current package information without
+        // changing stored invoice amounts.
+        $items = is_array($invoice->items)
+            ? $invoice->items
+            : [];
 
-        $displayItems = collect($items)->map(function ($item) {
-            if (
-                !is_array($item) ||
-                strtolower((string) ($item['type'] ?? '')) !== 'shipping'
-            ) {
+        $displayItems = collect($items)->map(
+            function ($item) {
+                if (
+                    !is_array($item)
+                    || strtolower(
+                        (string) ($item['type'] ?? '')
+                    ) !== 'shipping'
+                ) {
+                    return $item;
+                }
+
+                $packageId = $item['package_id'] ?? null;
+
+                $package = $packageId !== null
+                    ? Package::find($packageId)
+                    : null;
+
+                if (!$package) {
+                    return $item;
+                }
+
+                $productName = trim((string) (
+                    $package->product_name
+                    ?: $package->product_category
+                    ?: 'Logistics Service'
+                ));
+
+                $boxCount = (int) (
+                    $package->box_count ?? 0
+                );
+
+                $itemQuantity = (int) (
+                    $package->quantity ?? 0
+                );
+
+                $item['product_name'] = $productName;
+
+                $item['package_number'] =
+                    $package->package_id
+                    ?: ($item['package_number'] ?? null);
+
+                $item['china_waybill_number'] =
+                    $package->china_waybill_number
+                    ?: (
+                        $package->tracking_number
+                        ?: (
+                            $item['china_waybill_number']
+                            ?? null
+                        )
+                    );
+
+                $item['tracking_number'] =
+                    $package->tracking_number
+                    ?: ($item['tracking_number'] ?? null);
+
+                $item['hfl_package_code'] =
+                    $package->hfl_package_code
+                    ?: ($item['hfl_package_code'] ?? null);
+
+                $item['quantity'] = max(
+                    1,
+                    $boxCount > 0
+                        ? $boxCount
+                        : $itemQuantity
+                );
+
                 return $item;
             }
+        )->values()->all();
 
-            $packageId = $item['package_id'] ?? null;
-            $package = $packageId !== null
-                ? Package::find($packageId)
-                : null;
+        $invoice->setAttribute(
+            'items',
+            $displayItems
+        );
 
-            if (!$package) {
-                return $item;
-            }
+        $invoice->setAttribute(
+            'payments',
+            $payments
+        );
 
-            $productName = trim((string) (
-                $package->product_name
-                ?: $package->product_category
-                ?: 'Logistics Service'
-            ));
-
-            $boxCount = (int) ($package->box_count ?? 0);
-            $itemQuantity = (int) ($package->quantity ?? 0);
-
-            $item['product_name'] = $productName;
-            $item['package_number'] = $package->package_id
-                ?: ($item['package_number'] ?? null);
-            $item['china_waybill_number'] = $package->china_waybill_number
-                ?: ($package->tracking_number ?: ($item['china_waybill_number'] ?? null));
-            $item['tracking_number'] = $package->tracking_number
-                ?: ($item['tracking_number'] ?? null);
-            $item['hfl_package_code'] = $package->hfl_package_code
-                ?: ($item['hfl_package_code'] ?? null);
-            $item['quantity'] = max(
-                1,
-                $boxCount > 0 ? $boxCount : $itemQuantity
-            );
-
-            return $item;
-        })->values()->all();
-
-        $invoice->setAttribute('items', $displayItems);
-        $invoice->setAttribute('payments', $payments);
-
-        return $this->ok($invoice, 'Invoice retrieved');
+        return $this->ok(
+            $invoice,
+            'Invoice retrieved'
+        );
     }
 
-    /**
-     * Update the editable billing snapshot of an existing invoice.
-     *
-     * This is intentionally separate from the generic CRUD update so
-     * accounting totals are always recalculated server-side and paid
-     * amounts are never accepted from the browser.
-     */
+    // --------------------------------------------------------
+    // UPDATE BILLING SNAPSHOT
+    // --------------------------------------------------------
+
     public function updateBilling(Request $request, $id)
     {
         $data = $request->validate([
@@ -162,86 +435,186 @@ class InvoiceController extends CrudController
         ]);
 
         return DB::transaction(function () use ($data, $id) {
-            $invoice = Invoice::where('is_test', false)->lockForUpdate()->findOrFail($id);
+            $invoice = Invoice::where('is_test', false)
+                ->lockForUpdate()
+                ->findOrFail($id);
 
-            if (in_array((string) $invoice->status, ['Cancelled', 'Void'], true)) {
-                return $this->fail('Cancelled or void invoices cannot be edited.', [], 422);
+            if ($this->isVoided($invoice->status)) {
+                return $this->fail(
+                    'Cancelled or void invoices cannot be edited.',
+                    [],
+                    422
+                );
             }
 
-            $items = is_array($invoice->items) ? $invoice->items : [];
+            $items = is_array($invoice->items)
+                ? $invoice->items
+                : [];
+
             $shippingIndex = collect($items)->search(
-                fn ($item) => strtolower((string) ($item['type'] ?? '')) === 'shipping'
+                fn ($item) =>
+                    is_array($item)
+                    && strtolower(
+                        (string) ($item['type'] ?? '')
+                    ) === 'shipping'
             );
 
             if ($shippingIndex === false) {
                 return $this->fail(
-                    'This invoice is not linked to a shipping package and cannot use package billing edit mode.',
+                    'This invoice is not linked to a shipping '
+                    . 'package and cannot use package billing edit mode.',
                     [],
                     422
                 );
             }
 
             $shippingItem = $items[$shippingIndex];
-            $packageId = $shippingItem['package_id'] ?? null;
-            $package = $packageId ? Package::find($packageId) : null;
 
-            $snapshot = is_array($invoice->pricing_snapshot)
+            $packageId =
+                $shippingItem['package_id'] ?? null;
+
+            $package = $packageId
+                ? Package::find($packageId)
+                : null;
+
+            $snapshot = is_array(
+                $invoice->pricing_snapshot
+            )
                 ? $invoice->pricing_snapshot
                 : [];
+
             $meta = is_array($invoice->meta)
                 ? $invoice->meta
                 : [];
 
             $finalCbm = (float) $data['final_cbm'];
-            $finalWeight = array_key_exists('final_weight', $data) && $data['final_weight'] !== null
+
+            $finalWeight = (
+                array_key_exists('final_weight', $data)
+                && $data['final_weight'] !== null
+            )
                 ? (float) $data['final_weight']
-                : (float) ($snapshot['final_weight'] ?? $meta['final_weight'] ?? 0);
-            $pricingType = strtoupper((string) ($data['pricing_type'] ?? $snapshot['pricing_type'] ?? $meta['pricing_type'] ?? 'GC'));
+                : (float) (
+                    $snapshot['final_weight']
+                    ?? $meta['final_weight']
+                    ?? 0
+                );
+
+            $pricingType = strtoupper((string) (
+                $data['pricing_type']
+                ?? $snapshot['pricing_type']
+                ?? $meta['pricing_type']
+                ?? 'GC'
+            ));
+
             $rate = (float) $data['rate'];
-            $rateType = strtoupper((string) ($snapshot['rate_type'] ?? 'CBM'));
-            $minimumCbm = (float) ($snapshot['minimum_cbm'] ?? 0);
+
+            $rateType = strtoupper((string) (
+                $snapshot['rate_type'] ?? 'CBM'
+            ));
+
+            $minimumCbm = (float) (
+                $snapshot['minimum_cbm'] ?? 0
+            );
 
             $chargeable = $rateType === 'KG'
                 ? $finalWeight
                 : max($finalCbm, $minimumCbm);
 
-            $shippingCost = round($chargeable * $rate, 2);
+            $shippingCost = round(
+                $chargeable * $rate,
+                2
+            );
 
-            $deliveryFee = (float) ($data['delivery_fee'] ?? 0);
-            $handlingFee = (float) ($data['handling_fee'] ?? 0);
-            $warehouseFee = (float) ($data['warehouse_fee'] ?? 0);
-            $otherFee = (float) ($data['other_fee'] ?? 0);
-            $discount = (float) ($data['discount'] ?? 0);
+            $deliveryFee = (float) (
+                $data['delivery_fee'] ?? 0
+            );
 
-            $feeSubtotal = $deliveryFee + $handlingFee + $warehouseFee;
-            $discount = min($feeSubtotal + $shippingCost + $otherFee, $discount);
-            $grandTotal = round(max(0, $feeSubtotal + $shippingCost + $otherFee - $discount), 2);
-            $paidAmount = round((float) ($invoice->paid_amount ?? 0), 2);
+            $handlingFee = (float) (
+                $data['handling_fee'] ?? 0
+            );
 
-            // Do not silently create an accounting overpayment when an already-paid
-            // invoice is edited downward. The user must resolve the payment first.
+            $warehouseFee = (float) (
+                $data['warehouse_fee'] ?? 0
+            );
+
+            $otherFee = (float) (
+                $data['other_fee'] ?? 0
+            );
+
+            $discount = (float) (
+                $data['discount'] ?? 0
+            );
+
+            $feeSubtotal =
+                $deliveryFee
+                + $handlingFee
+                + $warehouseFee;
+
+            $discount = min(
+                $feeSubtotal + $shippingCost + $otherFee,
+                $discount
+            );
+
+            $grandTotal = round(
+                max(
+                    0,
+                    $feeSubtotal
+                    + $shippingCost
+                    + $otherFee
+                    - $discount
+                ),
+                2
+            );
+
+            $paidAmount = round(
+                (float) ($invoice->paid_amount ?? 0),
+                2
+            );
+
             if ($grandTotal + 0.0001 < $paidAmount) {
                 return $this->fail(
-                    'The new bill total cannot be lower than the amount already paid. Reduce/refund the payment first.',
+                    'The new bill total cannot be lower '
+                    . 'than the amount already paid. '
+                    . 'Reduce or refund the payment first.',
                     [
                         'grand_total' => [
-                            'New total must be at least ' . number_format($paidAmount, 2, '.', ''),
+                            'New total must be at least '
+                            . number_format(
+                                $paidAmount,
+                                2,
+                                '.',
+                                ''
+                            ),
                         ],
                     ],
                     422
                 );
             }
 
-            $outstanding = round(max(0, $grandTotal - $paidAmount), 2);
-            $status = $outstanding <= 0.0001 ? 'Paid' : ($paidAmount > 0 ? 'Partially Paid' : 'Unpaid');
+            $outstanding = round(
+                max(0, $grandTotal - $paidAmount),
+                2
+            );
 
-            // Update the shipping line while preserving its tracking/package identity.
+            $status = $outstanding <= 0.0001
+                ? 'Paid'
+                : (
+                    $paidAmount > 0
+                        ? 'Partially Paid'
+                        : 'Unpaid'
+                );
+
             $shippingItem['cbm'] = $finalCbm;
             $shippingItem['weight'] = $finalWeight;
-            // Quantity represents the package box/item count, not CBM or weight.
-            
-            $boxCount = (int) ($package?->box_count ?? 0);
-            $itemQuantity = (int) ($package?->quantity ?? 0);
+
+            $boxCount = (int) (
+                $package?->box_count ?? 0
+            );
+
+            $itemQuantity = (int) (
+                $package?->quantity ?? 0
+            );
 
             $shippingItem['quantity'] = max(
                 1,
@@ -250,7 +623,10 @@ class InvoiceController extends CrudController
                     : (
                         $itemQuantity > 0
                             ? $itemQuantity
-                            : (int) ($shippingItem['quantity'] ?? 1)
+                            : (int) (
+                                $shippingItem['quantity']
+                                ?? 1
+                            )
                     )
             );
 
@@ -259,24 +635,32 @@ class InvoiceController extends CrudController
                     (string) (
                         $package->product_name
                         ?: $package->product_category
-                        ?: ($shippingItem['description'] ?? 'Logistics Service')
+                        ?: (
+                            $shippingItem['description']
+                            ?? 'Logistics Service'
+                        )
                     )
                 );
             }
+
             $shippingItem['unit_price'] = $rate;
             $shippingItem['amount'] = $shippingCost;
+
             $items[$shippingIndex] = $shippingItem;
 
-            // Remove old generated fee lines and rebuild them from the edited values.
-            $items = array_values(array_filter($items, function ($item, $index) use ($shippingIndex) {
-                if ($index === 0 && false) return true;
-                $type = strtolower((string) ($item['type'] ?? ''));
-                if ($type !== 'fee') return true;
-                return false;
-            }, ARRAY_FILTER_USE_BOTH));
+            // Remove generated fee lines and rebuild.
+            $items = array_values(
+                array_filter(
+                    $items,
+                    function ($item) {
+                        return strtolower(
+                            (string) ($item['type'] ?? '')
+                        ) !== 'fee';
+                    }
+                )
+            );
 
-            $packageForItems = $package;
-            if ($packageForItems) {
+            if ($package) {
                 foreach ([
                     ['Delivery Fee', $deliveryFee],
                     ['Handling Fee', $handlingFee],
@@ -284,15 +668,32 @@ class InvoiceController extends CrudController
                     ['Other Fee', $otherFee],
                 ] as [$label, $amount]) {
                     if ($amount > 0) {
-                        $items[] = $this->feeItem($packageForItems, $label, $amount, $finalCbm, $finalWeight);
+                        $items[] = $this->feeItem(
+                            $package,
+                            $label,
+                            $amount,
+                            $finalCbm,
+                            $finalWeight
+                        );
                     }
                 }
             }
 
-            // Re-assert shipping line first for a predictable print layout.
-            $shippingLine = $shippingItem;
-            $nonShipping = array_values(array_filter($items, fn ($item) => strtolower((string) ($item['type'] ?? '')) !== 'shipping'));
-            $items = array_merge([$shippingLine], $nonShipping);
+            // Shipping line first.
+            $nonShipping = array_values(
+                array_filter(
+                    $items,
+                    fn ($item) =>
+                        strtolower(
+                            (string) ($item['type'] ?? '')
+                        ) !== 'shipping'
+                )
+            );
+
+            $items = array_merge(
+                [$shippingItem],
+                $nonShipping
+            );
 
             $snapshot['pricing_type'] = $pricingType;
             $snapshot['rate'] = $rate;
@@ -322,16 +723,21 @@ class InvoiceController extends CrudController
             $invoice->items = $items;
             $invoice->pricing_snapshot = $snapshot;
             $invoice->meta = $meta;
-            $invoice->subtotal = round($feeSubtotal, 2);
+            $invoice->subtotal = round(
+                $feeSubtotal,
+                2
+            );
             $invoice->discount = round($discount, 2);
             $invoice->tax = 0;
             $invoice->grand_total = $grandTotal;
             $invoice->paid_amount = $paidAmount;
             $invoice->outstanding = $outstanding;
             $invoice->status = $status;
+
             if (!empty($data['due_date'])) {
                 $invoice->due_date = $data['due_date'];
             }
+
             $invoice->save();
 
             if ($package) {
@@ -347,70 +753,122 @@ class InvoiceController extends CrudController
                 $package->other_fee = $otherFee;
                 $package->discount = $discount;
                 $package->grand_total = $grandTotal;
-                if (in_array((string) $package->status, ['Measurement Completed', 'Ready for Billing', 'Cambodia Warehouse'], true)) {
+
+                if (in_array(
+                    (string) $package->status,
+                    [
+                        'Measurement Completed',
+                        'Ready for Billing',
+                        'Cambodia Warehouse',
+                    ],
+                    true
+                )) {
                     $package->status = 'Invoiced';
+
                     TrackingEvent::create([
-                        'tracking_number' => $package->tracking_number,
+                        'tracking_number' =>
+                            $package->tracking_number,
                         'package_id' => $package->id,
                         'status' => 'Invoiced',
-                        'location' => $package->warehouse_location ?: 'Cambodia Warehouse',
-                        'warehouse' => 'Cambodia Warehouse',
-                        'staff_name' => auth()->user()?->name ?? 'Billing',
-                        'note' => 'Current logistics rate confirmed; billing draft finalized',
+                        'location' =>
+                            $package->warehouse_location
+                            ?: 'Cambodia Warehouse',
+                        'warehouse' =>
+                            'Cambodia Warehouse',
+                        'staff_name' =>
+                            auth()->user()?->name
+                            ?? 'Billing',
+                        'note' =>
+                            'Current logistics rate confirmed; '
+                            . 'billing draft finalized',
                         'event_at' => now(),
                     ]);
                 }
+
                 $package->save();
             }
 
+            $invoice = $invoice->fresh();
+
+            $invoice->setAttribute(
+                'payments',
+                Payment::where('is_test', false)
+                    ->where('invoice_id', $invoice->id)
+                    ->orderByDesc('paid_at')
+                    ->get()
+            );
+
             return $this->ok(
-                $invoice->fresh()->setAttribute(
-                    'payments',
-                    Payment::where('is_test', false)
-                        ->where('invoice_id', $invoice->id)
-                        ->orderByDesc('paid_at')
-                        ->get()
-                ),
+                $invoice,
                 'Billing updated'
             );
         });
     }
+
+    // --------------------------------------------------------
+    // CREATE MANUAL INVOICE
+    // --------------------------------------------------------
 
     public function store(Request $request)
     {
         $data = $request->validate($this->rules);
 
         $invoice = DB::transaction(function () use ($data) {
-
             $items = collect($data['items']);
 
             $shippingFee = round(
                 $items
-                    ->filter(fn ($item) => ($item['type'] ?? '') === 'shipping')
-                    ->sum(fn ($item) => (float) ($item['amount'] ?? 0)),
+                    ->filter(
+                        fn ($item) =>
+                            ($item['type'] ?? '')
+                            === 'shipping'
+                    )
+                    ->sum(
+                        fn ($item) =>
+                            (float) ($item['amount'] ?? 0)
+                    ),
                 2
             );
 
             $otherFee = round(
                 $items
                     ->filter(function ($item) {
-                        $type = strtolower((string) ($item['type'] ?? ''));
-                        $description = strtolower((string) ($item['description'] ?? ''));
+                        $type = strtolower(
+                            (string) ($item['type'] ?? '')
+                        );
+
+                        $description = strtolower(
+                            (string) (
+                                $item['description'] ?? ''
+                            )
+                        );
 
                         return $type === 'other_fee'
                             || $description === 'other fee';
                     })
-                    ->sum(fn ($item) => (float) ($item['amount'] ?? 0)),
+                    ->sum(
+                        fn ($item) =>
+                            (float) ($item['amount'] ?? 0)
+                    ),
                 2
             );
 
             $subtotal = round(
                 $items
                     ->reject(function ($item) {
-                        return ($item['type'] ?? '') === 'shipping'
-                            || strtolower((string) ($item['description'] ?? '')) === 'other fee';
+                        return (
+                            $item['type'] ?? ''
+                        ) === 'shipping'
+                            || strtolower(
+                                (string) (
+                                    $item['description'] ?? ''
+                                )
+                            ) === 'other fee';
                     })
-                    ->sum(fn ($item) => (float) ($item['amount'] ?? 0)),
+                    ->sum(
+                        fn ($item) =>
+                            (float) ($item['amount'] ?? 0)
+                    ),
                 2
             );
 
@@ -422,14 +880,18 @@ class InvoiceController extends CrudController
             $grandTotal = round(
                 max(
                     0,
-                    $subtotal + $shippingFee + $otherFee - $discount
+                    $subtotal
+                    + $shippingFee
+                    + $otherFee
+                    - $discount
                 ),
                 2
             );
 
             $meta = $data['meta'] ?? [];
 
-            $meta['bill_date'] = $meta['bill_date']
+            $meta['bill_date'] =
+                $meta['bill_date']
                 ?? now()->toDateString();
 
             $meta['shipping_fee'] = $shippingFee;
@@ -437,10 +899,18 @@ class InvoiceController extends CrudController
 
             $invoice = new Invoice();
 
-            $invoice->invoice_no = 'TMP-INV-' . Str::uuid();
-            $invoice->quotation_id = $data['quotation_id'] ?? null;
-            $invoice->customer_id = $data['customer_id'];
-            $invoice->customer_name = $data['customer_name'] ?? null;
+            $invoice->invoice_no =
+                'TMP-INV-' . Str::uuid();
+
+            $invoice->quotation_id =
+                $data['quotation_id'] ?? null;
+
+            $invoice->customer_id =
+                $data['customer_id'];
+
+            $invoice->customer_name =
+                $data['customer_name'] ?? null;
+
             $invoice->items = $data['items'];
             $invoice->discount = $discount;
             $invoice->tax = 0;
@@ -449,50 +919,35 @@ class InvoiceController extends CrudController
             $invoice->paid_amount = 0;
             $invoice->outstanding = $grandTotal;
             $invoice->status = 'Unpaid';
-            $invoice->due_date = $data['due_date']
+
+            $invoice->due_date =
+                $data['due_date']
                 ?? now()->addDays(7)->toDateString();
+
             $invoice->meta = $meta;
 
             $invoice->save();
 
             $invoice->invoice_no =
-                $this->finalizeInvoiceNumber($invoice->id);
+                $this->finalizeInvoiceNumber(
+                    $invoice->id
+                );
 
             $invoice->save();
 
             return $invoice->fresh();
         });
 
-        return $this->ok($invoice, 'Created');
+        return $this->ok(
+            $invoice,
+            'Created'
+        );
     }
 
-    /**
-     * Generate Invoice directly from Package.
-     *
-     * Billing workflow:
-     *
-     * Cambodia Warehouse
-     *      ↓
-     * Measurement Completed
-     *      ↓
-     * Ready for Billing
-     *      ↓
-     * Billing
-     *      ↓
-     * Final CBM / Weight
-     *      ↓
-     * GC / SC
-     *      ↓
-     * Rate Override
-     *      ↓
-     * Shipping Cost
-     *      ↓
-     * Fees / Discount
-     *      ↓
-     * Grand Total
-     *      ↓
-     * Invoice
-     */
+    // --------------------------------------------------------
+    // GENERATE INVOICE FROM ONE PACKAGE
+    // --------------------------------------------------------
+
     public function fromPackage(Request $request, $packageId)
     {
         $billing = $request->validate([
@@ -513,23 +968,23 @@ class InvoiceController extends CrudController
             $packageId,
             $billing
         ) {
-
-            /*
-             * ---------------------------------------------------------
-             * 1. FIND PACKAGE
-             * ---------------------------------------------------------
-             */
-
+            // 1. Find package.
             $package = Package::with([
                 'customer',
                 'containers.shipment',
             ])
                 ->where(function ($query) use ($packageId) {
-
-                    $query->where('id', $packageId)
+                    $query
+                        ->where('id', $packageId)
                         ->orWhere('package_id', $packageId)
-                        ->orWhere('hfl_package_code', $packageId)
-                        ->orWhere('tracking_number', $packageId)
+                        ->orWhere(
+                            'hfl_package_code',
+                            $packageId
+                        )
+                        ->orWhere(
+                            'tracking_number',
+                            $packageId
+                        )
                         ->orWhere(
                             'china_waybill_number',
                             $packageId
@@ -537,30 +992,31 @@ class InvoiceController extends CrudController
                 })
                 ->firstOrFail();
 
-            /*
-             * ---------------------------------------------------------
-             * 2. PREVENT DUPLICATE INVOICE
-             * ---------------------------------------------------------
-             */
-
+            // 2. Prevent duplicate ACTIVE invoice.
+            // Void invoices do not block new billing.
             $existingInvoice = Invoice::query()
                 ->where('is_test', false)
+                ->whereNotIn('status', [
+                    'Void',
+                    'Voided',
+                    'Cancelled',
+                ])
                 ->get()
                 ->first(function ($invoice) use ($package) {
-
                     $items = is_array($invoice->items)
                         ? $invoice->items
                         : [];
 
                     return collect($items)->contains(
                         fn ($item) =>
-                            (string) ($item['package_id'] ?? '')
-                            === (string) $package->id
+                            is_array($item)
+                            && (string) (
+                                $item['package_id'] ?? ''
+                            ) === (string) $package->id
                     );
                 });
 
             if ($existingInvoice) {
-
                 if (!in_array(
                     (string) $package->status,
                     [
@@ -573,33 +1029,24 @@ class InvoiceController extends CrudController
                     ],
                     true
                 )) {
-
                     $package->status = 'Invoiced';
                     $package->save();
 
                     TrackingEvent::create([
                         'tracking_number' =>
                             $package->tracking_number,
-
-                        'package_id' =>
-                            $package->id,
-
+                        'package_id' => $package->id,
                         'status' => 'Invoiced',
-
                         'location' =>
                             $package->warehouse_location
                             ?: 'Cambodia Warehouse',
-
                         'warehouse' =>
                             'Cambodia Warehouse',
-
                         'staff_name' =>
                             auth()->user()?->name
                             ?? 'Billing',
-
                         'note' =>
                             'Existing invoice linked to package',
-
                         'event_at' => now(),
                     ]);
                 }
@@ -607,10 +1054,10 @@ class InvoiceController extends CrudController
                 $existingInvoice->setAttribute(
                     'payments',
                     Payment::where('is_test', false)
-                    ->where(
-                        'invoice_id',
-                        $existingInvoice->id
-                    )
+                        ->where(
+                            'invoice_id',
+                            $existingInvoice->id
+                        )
                         ->orderByDesc('paid_at')
                         ->get()
                 );
@@ -621,96 +1068,127 @@ class InvoiceController extends CrudController
                 );
             }
 
-            /*
-             * ---------------------------------------------------------
-             * 3. AUTO-PREPARE BILLING
-             * ---------------------------------------------------------
-             *
-             * Billing is intentionally one-click for warehouse staff. If the
-             * package is still in Cambodia Warehouse / Measurement Completed,
-             * automatically validate the final measurement, resolve the active
-             * DB pricing, recalculate the package pricing snapshot, and move it
-             * to Ready for Billing. Staff do not need to leave Billing and
-             * manually click "Mark Ready for Billing" first.
-             */
-
-            // Container Movement is the operational source of truth for transport
-            // and physical arrival. A package can still carry an older transport
-            // status such as "Loading" because ContainerController intentionally
-            // does not overwrite the package lifecycle after warehouse stages.
-            // For billing, use the latest active container movement as the effective
-            // arrival state so a Container marked Received/Cambodia Warehouse can
-            // be billed without requiring staff to manually edit the package status.
+            // 3. Determine effective warehouse status.
             $containerForBilling = $package->containers
-                ->sortByDesc(fn ($container) => optional($container->trackingEvents->first())->event_date ?? $container->updated_at)
+                ->sortByDesc(
+                    fn ($container) =>
+                        optional(
+                            $container->trackingEvents->first()
+                        )->event_date
+                        ?? $container->updated_at
+                )
                 ->first();
 
-            $effectiveBillingStatus = (string) ($package->status ?? '');
+            $effectiveBillingStatus =
+                (string) ($package->status ?? '');
+
             if ($containerForBilling) {
-                $containerStatus = (string) ($containerForBilling->status ?? '');
-                if (in_array($containerStatus, ['Cambodia Warehouse', 'Received'], true)) {
-                    $effectiveBillingStatus = 'Cambodia Warehouse';
-                } elseif ($containerStatus === 'Delivered' && $effectiveBillingStatus === 'Loading') {
-                    // Keep last-mile delivery controlled by Delivery/POD, but do not
-                    // block an invoice solely because the package lifecycle is stale.
-                    $effectiveBillingStatus = 'Cambodia Warehouse';
+                $containerStatus = (string) (
+                    $containerForBilling->status ?? ''
+                );
+
+                if (in_array(
+                    $containerStatus,
+                    ['Cambodia Warehouse', 'Received'],
+                    true
+                )) {
+                    $effectiveBillingStatus =
+                        'Cambodia Warehouse';
+                } elseif (
+                    $containerStatus === 'Delivered'
+                    && $effectiveBillingStatus === 'Loading'
+                ) {
+                    $effectiveBillingStatus =
+                        'Cambodia Warehouse';
                 }
             }
 
-            if (in_array($effectiveBillingStatus, ['Cambodia Warehouse', 'Measurement Completed'], true)) {
-
-                if ((float) $package->total_cbm <= 0 && (float) $package->total_weight <= 0) {
+            // 4. Prepare package measurement and pricing.
+            if (in_array(
+                $effectiveBillingStatus,
+                [
+                    'Cambodia Warehouse',
+                    'Measurement Completed',
+                ],
+                true
+            )) {
+                if (
+                    (float) $package->total_cbm <= 0
+                    && (float) $package->total_weight <= 0
+                ) {
                     return $this->fail(
-                        'Please complete the Cambodia Warehouse measurement first. CBM or weight is required before billing.',
+                        'Please complete the Cambodia Warehouse '
+                        . 'measurement first. CBM or weight is required.',
                         [
                             'status' => [
-                                'Current package status: ' . ($package->status ?: 'Unknown'),
+                                'Current package status: '
+                                . (
+                                    $package->status
+                                    ?: 'Unknown'
+                                ),
                             ],
                         ],
                         422
                     );
                 }
 
-                // Pricing is optional at this stage. Logistics rates change frequently,
-                // so a package can open a Billing Draft even when no active Pricing List
-                // exists. The final/current rate is entered by billing staff on the bill.
-                $pricingResolver = app(PackageController::class);
-                $activePricing = $pricingResolver->findActivePricingForPackage(
-                    strtoupper((string) $package->shipping_mode),
-                    strtoupper((string) $package->pricing_type),
-                    trim((string) $package->from_warehouse),
-                    trim((string) $package->to_warehouse)
+                $pricingResolver = app(
+                    PackageController::class
                 );
 
-                if ($activePricing) {
-                    $package = $pricingResolver->recalculatePricing($package);
-                }
+                $activePricing =
+                    $pricingResolver->findActivePricingForPackage(
+                        strtoupper(
+                            (string) $package->shipping_mode
+                        ),
+                        strtoupper(
+                            (string) $package->pricing_type
+                        ),
+                        trim(
+                            (string) $package->from_warehouse
+                        ),
+                        trim(
+                            (string) $package->to_warehouse
+                        )
+                    );
 
-                // Do not force Ready for Billing here. Without a current rate this is
-                // a Billing Draft; once the rate is entered and saved, the invoice
-                // becomes Unpaid and the package moves to Invoiced.
+                if ($activePricing) {
+                    $package =
+                        $pricingResolver->recalculatePricing(
+                            $package
+                        );
+                }
             }
 
-            if (!in_array($effectiveBillingStatus, ['Cambodia Warehouse', 'Measurement Completed', 'Ready for Billing'], true)) {
+            if (!in_array(
+                $effectiveBillingStatus,
+                [
+                    'Cambodia Warehouse',
+                    'Measurement Completed',
+                    'Ready for Billing',
+                ],
+                true
+            )) {
                 return $this->fail(
-                    'Package cannot be billed from its current status: ' . ($package->status ?: 'Unknown') . '.',
+                    'Package cannot be billed from its '
+                    . 'current status: '
+                    . (
+                        $package->status
+                        ?: 'Unknown'
+                    )
+                    . '.',
                     [
                         'status' => [
-                            'Only a package that is Ready for Billing can create an invoice.',
+                            'Only a package that is Ready for '
+                            . 'Billing can create an invoice.',
                         ],
                     ],
                     422
                 );
             }
 
-            /*
-             * ---------------------------------------------------------
-             * 4. CUSTOMER / CONTAINER / SHIPMENT
-             * ---------------------------------------------------------
-             */
-
-            $customer =
-                $package->customer
+            // 5. Resolve customer, container and shipment.
+            $customer = $package->customer
                 ?: Customer::where(
                     'customer_id',
                     $package->customer_id
@@ -720,16 +1198,13 @@ class InvoiceController extends CrudController
 
             $shipment = $container?->shipment;
 
-            /*
-             * Fallback: find shipment by package_ids
-             */
             if (!$shipment) {
-
                 $shipment = Shipment::query()
                     ->get()
                     ->first(function ($candidate) use ($package) {
-
-                        $ids = is_array($candidate->package_ids)
+                        $ids = is_array(
+                            $candidate->package_ids
+                        )
                             ? $candidate->package_ids
                             : (
                                 json_decode(
@@ -739,35 +1214,35 @@ class InvoiceController extends CrudController
                             );
 
                         return collect($ids)
-                            ->map(fn ($value) => (string) $value)
+                            ->map(
+                                fn ($value) =>
+                                    (string) $value
+                            )
                             ->contains(
                                 (string) $package->id
                             );
                     });
             }
 
-            /*
-             * ---------------------------------------------------------
-             * 5. FINAL BILLING VALUES
-             * ---------------------------------------------------------
-             */
-
-            $finalCbm =
+            // 6. Final measurement.
+            $finalCbm = (
                 array_key_exists('final_cbm', $billing)
                 && $billing['final_cbm'] !== null
-                    ? (float) $billing['final_cbm']
-                    : (float) ($package->total_cbm ?? 0);
+            )
+                ? (float) $billing['final_cbm']
+                : (float) (
+                    $package->total_cbm ?? 0
+                );
 
-            $finalWeight =
+            $finalWeight = (
                 array_key_exists('final_weight', $billing)
                 && $billing['final_weight'] !== null
-                    ? (float) $billing['final_weight']
-                    : (float) ($package->total_weight ?? 0);
+            )
+                ? (float) $billing['final_weight']
+                : (float) (
+                    $package->total_weight ?? 0
+                );
 
-            /*
-             * Pricing Type:
-             * GC or SC
-             */
             $pricingType = strtoupper(
                 (string) (
                     $billing['pricing_type']
@@ -776,9 +1251,6 @@ class InvoiceController extends CrudController
                 )
             );
 
-            /*
-             * Shipping information
-             */
             $shippingMode = strtoupper(
                 (string) (
                     $shipment?->shipping_mode
@@ -799,16 +1271,10 @@ class InvoiceController extends CrudController
                 ?: ''
             );
 
-            /*
-             * ---------------------------------------------------------
-             * 6. FIND ACTIVE PRICING FROM DATABASE
-             * ---------------------------------------------------------
-             */
-
+            // 7. Find active pricing.
             $pricing = null;
 
             if ($origin !== '' && $destination !== '') {
-
                 $today = now()->toDateString();
 
                 $pricing = Pricing::query()
@@ -820,20 +1286,10 @@ class InvoiceController extends CrudController
                         'pricing_type',
                         $pricingType
                     )
-                    ->where(
-                        'origin',
-                        $origin
-                    )
-                    ->where(
-                        'destination',
-                        $destination
-                    )
-                    ->where(
-                        'status',
-                        'Active'
-                    )
+                    ->where('origin', $origin)
+                    ->where('destination', $destination)
+                    ->where('status', 'Active')
                     ->where(function ($query) use ($today) {
-
                         $query
                             ->whereNull('effective_date')
                             ->orWhereDate(
@@ -843,7 +1299,6 @@ class InvoiceController extends CrudController
                             );
                     })
                     ->where(function ($query) use ($today) {
-
                         $query
                             ->whereNull('expiry_date')
                             ->orWhereDate(
@@ -856,200 +1311,124 @@ class InvoiceController extends CrudController
                     ->first();
             }
 
-            /*
-             * ---------------------------------------------------------
-             * 7. INITIALIZE PRICING VALUES
-             * ---------------------------------------------------------
-             */
-
+            // 8. Pricing snapshot.
             $pricingSnapshot = null;
-
             $rateType = 'CBM';
             $minimumCbm = 0;
             $rate = null;
             $pricingId = $package->pricing_id;
 
-            /*
-             * Pricing List default
-             */
             if ($pricing) {
-
-                $pricingId =
-                    $pricing->pricing_id;
+                $pricingId = $pricing->pricing_id;
 
                 $rateType = strtoupper(
                     (string) (
-                        $pricing->rate_type
-                        ?: 'CBM'
+                        $pricing->rate_type ?: 'CBM'
                     )
                 );
 
-                $minimumCbm =
-                    (float) (
-                        $pricing->minimum_cbm
-                        ?? 0
-                    );
+                $minimumCbm = (float) (
+                    $pricing->minimum_cbm ?? 0
+                );
 
-                $rate =
-                    (float) $pricing->rate;
+                $rate = (float) $pricing->rate;
 
                 $pricingSnapshot = [
                     'pricing_id' =>
                         $pricing->pricing_id,
-
                     'rate_name' =>
                         $pricing->rate_name,
-
                     'shipping_mode' =>
                         $pricing->shipping_mode,
-
                     'pricing_type' =>
                         $pricingType,
-
                     'origin' =>
                         $pricing->origin,
-
                     'destination' =>
                         $pricing->destination,
-
                     'rate_type' =>
                         $rateType,
-
                     'rate' =>
                         $rate,
-
                     'minimum_cbm' =>
                         $minimumCbm,
-
                     'currency' =>
                         $pricing->currency,
-
                     'effective_date' =>
                         $pricing->effective_date,
-
                     'expiry_date' =>
                         $pricing->expiry_date,
                 ];
             }
 
-            /*
-             * ---------------------------------------------------------
-             * 8. BILLING RATE OVERRIDE
-             * ---------------------------------------------------------
-             *
-             * If Billing screen sends rate,
-             * it overrides Pricing List.
-             */
-
+            // Manual rate overrides database pricing.
             if (
                 array_key_exists('rate', $billing)
                 && $billing['rate'] !== null
             ) {
-
                 $rate = (float) $billing['rate'];
             }
 
-            // Do not reuse an old package rate when there is no current Pricing List.
-            // A Logistics rate must be explicitly supplied for this bill.
             if ($rate === null) {
                 $rate = 0;
             }
 
-            // A Logistics rate is allowed to be entered later because rates can
-            // change daily. When no rate is supplied, create a Billing Draft rather
-            // than blocking the warehouse workflow or inventing a price.
             $isBillingDraft = $rate <= 0;
 
-            /*
-             * ---------------------------------------------------------
-             * 9. CHARGEABLE QUANTITY
-             * ---------------------------------------------------------
-             */
-
-            if ($rateType === 'KG') {
-
-                $chargeable = $finalWeight;
-
-            } else {
-
-                $chargeable = max(
-                    $finalCbm,
-                    $minimumCbm
-                );
-            }
-
-            /*
-             * ---------------------------------------------------------
-             * 10. SHIPPING COST
-             * ---------------------------------------------------------
-             */
+            $chargeable = $rateType === 'KG'
+                ? $finalWeight
+                : max($finalCbm, $minimumCbm);
 
             $shippingCost = round(
                 $chargeable * $rate,
                 2
             );
 
-            /*
-             * ---------------------------------------------------------
-             * 11. FEES
-             * ---------------------------------------------------------
-             */
+            // 9. Fees.
+            $deliveryFee = array_key_exists(
+                'delivery_fee',
+                $billing
+            )
+                ? (float) $billing['delivery_fee']
+                : (float) (
+                    $package->delivery_fee ?? 0
+                );
 
-            $deliveryFee =
-                array_key_exists(
-                    'delivery_fee',
-                    $billing
-                )
-                    ? (float) $billing['delivery_fee']
-                    : (float) (
-                        $package->delivery_fee ?? 0
-                    );
+            $handlingFee = array_key_exists(
+                'handling_fee',
+                $billing
+            )
+                ? (float) $billing['handling_fee']
+                : (float) (
+                    $package->handling_fee ?? 0
+                );
 
-            $handlingFee =
-                array_key_exists(
-                    'handling_fee',
-                    $billing
-                )
-                    ? (float) $billing['handling_fee']
-                    : (float) (
-                        $package->handling_fee ?? 0
-                    );
+            $warehouseFee = array_key_exists(
+                'warehouse_fee',
+                $billing
+            )
+                ? (float) $billing['warehouse_fee']
+                : (float) (
+                    $package->warehouse_fee ?? 0
+                );
 
-            $warehouseFee =
-                array_key_exists(
-                    'warehouse_fee',
-                    $billing
-                )
-                    ? (float) $billing['warehouse_fee']
-                    : (float) (
-                        $package->warehouse_fee ?? 0
-                    );
+            $otherFee = array_key_exists(
+                'other_fee',
+                $billing
+            )
+                ? (float) $billing['other_fee']
+                : (float) (
+                    $package->other_fee ?? 0
+                );
 
-            $otherFee =
-                array_key_exists(
-                    'other_fee',
-                    $billing
-                )
-                    ? (float) $billing['other_fee']
-                    : (float) (
-                        $package->other_fee ?? 0
-                    );
-
-            $discount =
-                array_key_exists(
-                    'discount',
-                    $billing
-                )
-                    ? (float) $billing['discount']
-                    : (float) (
-                        $package->discount ?? 0
-                    );
-
-            /*
-             * ---------------------------------------------------------
-             * 12. GRAND TOTAL
-             * ---------------------------------------------------------
-             */
+            $discount = array_key_exists(
+                'discount',
+                $billing
+            )
+                ? (float) $billing['discount']
+                : (float) (
+                    $package->discount ?? 0
+                );
 
             $subtotal =
                 $deliveryFee
@@ -1057,9 +1436,7 @@ class InvoiceController extends CrudController
                 + $warehouseFee;
 
             $discount = min(
-                $subtotal
-                + $shippingCost
-                + $otherFee,
+                $subtotal + $shippingCost + $otherFee,
                 $discount
             );
 
@@ -1074,23 +1451,13 @@ class InvoiceController extends CrudController
                 2
             );
 
-            /*
-             * ---------------------------------------------------------
-             * 13. UPDATE PRICING SNAPSHOT
-             * ---------------------------------------------------------
-             */
-
+            // 10. Update pricing snapshot.
             if (is_array($pricingSnapshot)) {
-
                 $pricingSnapshot['pricing_type'] =
                     $pricingType;
 
-                $pricingSnapshot['rate'] =
-                    $rate;
-
-                $pricingSnapshot['rate_type'] =
-                    $rateType;
-
+                $pricingSnapshot['rate'] = $rate;
+                $pricingSnapshot['rate_type'] = $rateType;
                 $pricingSnapshot['chargeable'] =
                     $chargeable;
 
@@ -1104,140 +1471,100 @@ class InvoiceController extends CrudController
                     $shippingCost;
 
                 $pricingSnapshot['rate_source'] =
-                    $isBillingDraft ? 'Manual current rate required' : ($pricing ? 'Pricing List / override' : 'Manual current rate');
-
+                    $isBillingDraft
+                        ? 'Manual current rate required'
+                        : (
+                            $pricing
+                                ? 'Pricing List / override'
+                                : 'Manual current rate'
+                        );
             } else {
-
                 $pricingSnapshot = [
-                    'pricing_id' =>
-                        $pricingId,
-
-                    'rate_name' =>
-                        null,
-
-                    'shipping_mode' =>
-                        $shippingMode,
-
-                    'pricing_type' =>
-                        $pricingType,
-
-                    'origin' =>
-                        $origin,
-
-                    'destination' =>
-                        $destination,
-
-                    'rate_type' =>
-                        $rateType,
-
-                    'rate' =>
-                        $rate,
-
-                    'minimum_cbm' =>
-                        $minimumCbm,
-
-                    'chargeable' =>
-                        $chargeable,
-
-                    'final_cbm' =>
-                        $finalCbm,
-
-                    'final_weight' =>
-                        $finalWeight,
-
-                    'shipping_cost' =>
-                        $shippingCost,
-
-                    'currency' =>
-                        'USD',
-
-                    'effective_date' =>
-                        null,
-
-                    'expiry_date' =>
-                        null,
-
+                    'pricing_id' => $pricingId,
+                    'rate_name' => null,
+                    'shipping_mode' => $shippingMode,
+                    'pricing_type' => $pricingType,
+                    'origin' => $origin,
+                    'destination' => $destination,
+                    'rate_type' => $rateType,
+                    'rate' => $rate,
+                    'minimum_cbm' => $minimumCbm,
+                    'chargeable' => $chargeable,
+                    'final_cbm' => $finalCbm,
+                    'final_weight' => $finalWeight,
+                    'shipping_cost' => $shippingCost,
+                    'currency' => 'USD',
+                    'effective_date' => null,
+                    'expiry_date' => null,
                     'rate_source' =>
-                        $isBillingDraft ? 'Manual current rate required' : 'Manual current rate',
+                        $isBillingDraft
+                            ? 'Manual current rate required'
+                            : 'Manual current rate',
                 ];
             }
 
-            /*
-             * ---------------------------------------------------------
-             * 14. UPDATE PACKAGE FINAL BILLING SNAPSHOT
-             * ---------------------------------------------------------
-             */
+            // 11. Update package billing snapshot.
+            $package->total_cbm = $finalCbm;
+            $package->total_weight = $finalWeight;
+            $package->pricing_type = $pricingType;
+            $package->pricing_id = $pricingId;
+            $package->pricing_rate_type = $rateType;
+            $package->shipping_rate = $rate;
+            $package->shipping_cost = $shippingCost;
+            $package->delivery_fee = $deliveryFee;
+            $package->handling_fee = $handlingFee;
+            $package->warehouse_fee = $warehouseFee;
+            $package->other_fee = $otherFee;
+            $package->discount = $discount;
+            $package->grand_total = $grandTotal;
 
-            $package->total_cbm =
-                $finalCbm;
-
-            $package->total_weight =
-                $finalWeight;
-
-            $package->pricing_type =
-                $pricingType;
-
-            $package->pricing_id =
-                $pricingId;
-
-            $package->pricing_rate_type =
-                $rateType;
-
-            $package->shipping_rate =
-                $rate;
-
-            $package->shipping_cost =
-                $shippingCost;
-
-            $package->delivery_fee =
-                $deliveryFee;
-
-            $package->handling_fee =
-                $handlingFee;
-
-            $package->warehouse_fee =
-                $warehouseFee;
-
-            $package->other_fee =
-                $otherFee;
-
-            $package->discount =
-                $discount;
-
-            $package->grand_total =
-                $grandTotal;
-
-            if (!$isBillingDraft && in_array((string) $package->status, ['Measurement Completed', 'Ready for Billing', 'Cambodia Warehouse'], true)) {
+            if (
+                !$isBillingDraft
+                && in_array(
+                    (string) $package->status,
+                    [
+                        'Measurement Completed',
+                        'Ready for Billing',
+                        'Cambodia Warehouse',
+                    ],
+                    true
+                )
+            ) {
                 $package->status = 'Invoiced';
             }
 
             $package->save();
 
-            if (!$isBillingDraft && $package->status === 'Invoiced') {
+            if (
+                !$isBillingDraft
+                && $package->status === 'Invoiced'
+            ) {
                 TrackingEvent::create([
-                    'tracking_number' => $package->tracking_number,
+                    'tracking_number' =>
+                        $package->tracking_number,
                     'package_id' => $package->id,
                     'status' => 'Invoiced',
-                    'location' => $package->warehouse_location ?: 'Cambodia Warehouse',
-                    'warehouse' => 'Cambodia Warehouse',
-                    'staff_name' => auth()->user()?->name ?? 'Billing',
-                    'note' => 'Billing rate confirmed and invoice issued',
+                    'location' =>
+                        $package->warehouse_location
+                        ?: 'Cambodia Warehouse',
+                    'warehouse' =>
+                        'Cambodia Warehouse',
+                    'staff_name' =>
+                        auth()->user()?->name ?? 'Billing',
+                    'note' =>
+                        'Billing rate confirmed and invoice issued',
                     'event_at' => now(),
                 ]);
             }
 
-            /*
-             * ---------------------------------------------------------
-             * 15. INVOICE ITEM
-             * ---------------------------------------------------------
-             */
+            // 12. Build shipping item.
+            $boxCount = (int) (
+                $package->box_count ?? 0
+            );
 
-            $cbm = $finalCbm;
-
-            // Quantity represents the number of boxes/items, not CBM.
-            
-            $boxCount = (int) ($package->box_count ?? 0);
-            $itemQuantity = (int) ($package->quantity ?? 0);
+            $itemQuantity = (int) (
+                $package->quantity ?? 0
+            );
 
             $quantity = max(
                 1,
@@ -1246,208 +1573,127 @@ class InvoiceController extends CrudController
                     : $itemQuantity
             );
 
-
             $items = [
                 [
-                    'type' =>
-                        'shipping',
-
-                    'package_id' =>
-                        $package->id,
-
+                    'type' => 'shipping',
+                    'package_id' => $package->id,
                     'package_number' =>
                         $package->package_id,
-
-                    'description' =>
-                        trim(
-                            (string) (
-                                $package->product_name
-                                ?: $package->product_category
-                                ?: 'Logistics Service'
-                            )
-                        ),
-
+                    'description' => trim(
+                        (string) (
+                            $package->product_name
+                            ?: $package->product_category
+                            ?: 'Logistics Service'
+                        )
+                    ),
                     'tracking_number' =>
                         $package->tracking_number,
-
                     'china_waybill_number' =>
                         $package->china_waybill_number
                         ?: $package->tracking_number,
-
                     'hfl_package_code' =>
                         $package->hfl_package_code,
-
-                    'quantity' =>
-                        $quantity,
-
-                    'cbm' =>
-                        $cbm,
-
-                    'weight' =>
-                        $finalWeight,
-
-                    'unit_price' =>
-                        $rate,
-
+                    'quantity' => $quantity,
+                    'cbm' => $finalCbm,
+                    'weight' => $finalWeight,
+                    'unit_price' => $rate,
                     'amount' =>
-                        round(
-                            $shippingCost,
-                            2
-                        ),
+                        round($shippingCost, 2),
                 ],
             ];
 
             if ($deliveryFee > 0) {
-
-                $items[] =
-                    $this->feeItem(
-                        $package,
-                        'Delivery Fee',
-                        $deliveryFee,
-                        $finalCbm,
-                        $finalWeight
-                    );
+                $items[] = $this->feeItem(
+                    $package,
+                    'Delivery Fee',
+                    $deliveryFee,
+                    $finalCbm,
+                    $finalWeight
+                );
             }
 
             if ($handlingFee > 0) {
-
-                $items[] =
-                    $this->feeItem(
-                        $package,
-                        'Handling Fee',
-                        $handlingFee,
-                        $finalCbm,
-                        $finalWeight
-                    );
+                $items[] = $this->feeItem(
+                    $package,
+                    'Handling Fee',
+                    $handlingFee,
+                    $finalCbm,
+                    $finalWeight
+                );
             }
 
             if ($warehouseFee > 0) {
-
-                $items[] =
-                    $this->feeItem(
-                        $package,
-                        'Warehouse Fee',
-                        $warehouseFee,
-                        $finalCbm,
-                        $finalWeight
-                    );
+                $items[] = $this->feeItem(
+                    $package,
+                    'Warehouse Fee',
+                    $warehouseFee,
+                    $finalCbm,
+                    $finalWeight
+                );
             }
 
             if ($otherFee > 0) {
-
-                $items[] =
-                    $this->feeItem(
-                        $package,
-                        'Other Fee',
-                        $otherFee,
-                        $finalCbm,
-                        $finalWeight
-                    );
+                $items[] = $this->feeItem(
+                    $package,
+                    'Other Fee',
+                    $otherFee,
+                    $finalCbm,
+                    $finalWeight
+                );
             }
 
-            /*
-             * ---------------------------------------------------------
-             * 16. INVOICE META
-             * ---------------------------------------------------------
-             */
-
+            // 13. Build invoice metadata.
             $meta = [
-                'bill_date' =>
-                    now()->toDateString(),
-
+                'bill_date' => now()->toDateString(),
                 'customer_phone' =>
                     $customer?->phone,
-
                 'customer_address' =>
                     $customer?->address,
-
                 'origin' =>
                     $shipment?->origin
                     ?: $package->from_warehouse,
-
                 'destination' =>
                     $shipment?->destination
                     ?: $package->to_warehouse,
-
                 'shipping_method' =>
                     $shipment?->shipping_mode
                     ?: $package->shipping_mode,
-
                 'tracking_number' =>
                     $package->tracking_number,
-
                 'china_waybill_number' =>
                     $package->china_waybill_number
                     ?: $package->tracking_number,
-
                 'hfl_package_code' =>
                     $package->hfl_package_code,
-
                 'package_id' =>
                     $package->package_id,
-
                 'shipment_number' =>
                     $shipment?->shipment_number,
-
                 'container_number' =>
                     $container?->container_number,
-
-                'final_cbm' =>
-                    $finalCbm,
-
-                'final_weight' =>
-                    $finalWeight,
-
-                'pricing_type' =>
-                    $pricingType,
-
-                'rate' =>
-                    $rate,
-
-                'rate_type' =>
-                    $rateType,
-
-                'shipping_cost' =>
-                    $shippingCost,
-
-                'delivery_fee' =>
-                    $deliveryFee,
-
-                'handling_fee' =>
-                    $handlingFee,
-
-                'warehouse_fee' =>
-                    $warehouseFee,
-
-                'other_fee' =>
-                    $otherFee,
-
-                'discount' =>
-                    $discount,
-
-                'payment_method' =>
-                    null,
-
-                'payment_date' =>
-                    null,
-
-                'payment_reference' =>
-                    null,
+                'final_cbm' => $finalCbm,
+                'final_weight' => $finalWeight,
+                'pricing_type' => $pricingType,
+                'rate' => $rate,
+                'rate_type' => $rateType,
+                'shipping_cost' => $shippingCost,
+                'delivery_fee' => $deliveryFee,
+                'handling_fee' => $handlingFee,
+                'warehouse_fee' => $warehouseFee,
+                'other_fee' => $otherFee,
+                'discount' => $discount,
+                'payment_method' => null,
+                'payment_date' => null,
+                'payment_reference' => null,
             ];
 
-            /*
-             * ---------------------------------------------------------
-             * 17. CREATE INVOICE
-             * ---------------------------------------------------------
-             */
-
+            // 14. Create invoice.
             $invoice = new Invoice();
 
             $invoice->invoice_no =
                 'TMP-INV-' . Str::uuid();
 
-            $invoice->quotation_id =
-                null;
+            $invoice->quotation_id = null;
 
             $invoice->customer_id =
                 $package->customer_id;
@@ -1457,40 +1703,24 @@ class InvoiceController extends CrudController
                 ?: $customer?->full_name;
 
             $invoice->status =
-                $isBillingDraft ? 'Draft' : 'Unpaid';
+                $isBillingDraft
+                    ? 'Draft'
+                    : 'Unpaid';
 
-            $invoice->items =
-                $items;
+            $invoice->items = $items;
 
             $invoice->pricing_snapshot =
                 $pricingSnapshot;
 
-            $invoice->meta =
-                $meta;
-
-            $invoice->subtotal =
-                round(
-                    $subtotal,
-                    2
-                );
-
-            $invoice->discount =
-                round(
-                    $discount,
-                    2
-                );
-
-            $invoice->tax =
-                0;
-
-            $invoice->grand_total =
-                round(
-                    $grandTotal,
-                    2
-                );
-
-            $invoice->paid_amount =
-                0;
+            $invoice->meta = $meta;
+            $invoice->subtotal = round($subtotal, 2);
+            $invoice->discount = round($discount, 2);
+            $invoice->tax = 0;
+            $invoice->grand_total = round(
+                $grandTotal,
+                2
+            );
+            $invoice->paid_amount = 0;
 
             $invoice->outstanding =
                 $isBillingDraft
@@ -1499,17 +1729,9 @@ class InvoiceController extends CrudController
 
             $invoice->due_date =
                 $billing['due_date']
-                ?? now()
-                    ->addDays(7)
-                    ->toDateString();
+                ?? now()->addDays(7)->toDateString();
 
             $invoice->save();
-
-            /*
-             * ---------------------------------------------------------
-             * 18. FINAL INVOICE NUMBER
-             * ---------------------------------------------------------
-             */
 
             $invoice->invoice_no =
                 $this->finalizeInvoiceNumber(
@@ -1518,14 +1740,7 @@ class InvoiceController extends CrudController
 
             $invoice->save();
 
-            /*
-             * ---------------------------------------------------------
-             * 19. PACKAGE STATUS
-             * ---------------------------------------------------------
-             */
-
-            // Only a priced, non-draft invoice may move an eligible
-            // package into the Invoiced stage.
+            // 15. Finalize package status.
             $invoiceCanSetInvoicedStatus =
                 !$isBillingDraft
                 && in_array(
@@ -1543,22 +1758,22 @@ class InvoiceController extends CrudController
                 $package->save();
 
                 TrackingEvent::create([
-                    'tracking_number' => $package->tracking_number,
+                    'tracking_number' =>
+                        $package->tracking_number,
                     'package_id' => $package->id,
                     'status' => 'Invoiced',
-                    'location' => $package->warehouse_location ?: 'Cambodia Warehouse',
-                    'warehouse' => 'Cambodia Warehouse',
-                    'staff_name' => auth()->user()?->name ?? 'Billing',
-                    'note' => 'Billing rate confirmed and invoice issued',
+                    'location' =>
+                        $package->warehouse_location
+                        ?: 'Cambodia Warehouse',
+                    'warehouse' =>
+                        'Cambodia Warehouse',
+                    'staff_name' =>
+                        auth()->user()?->name ?? 'Billing',
+                    'note' =>
+                        'Billing rate confirmed and invoice issued',
                     'event_at' => now(),
                 ]);
             }
-
-            /*
-             * ---------------------------------------------------------
-             * 20. PAYMENT HISTORY
-             * ---------------------------------------------------------
-             */
 
             $invoice->setAttribute(
                 'payments',
@@ -1572,30 +1787,45 @@ class InvoiceController extends CrudController
         });
     }
 
-    /**
-     * One combined bill for several packages (tracking numbers) of ONE customer.
-     *
-     * Each package is priced by the existing fromPackage() logic, so every
-     * tracking keeps its own origin / shipping mode / GC-SC rate. Delivery,
-     * handling, warehouse, other fees and discount are charged ONCE (on the
-     * first package); the other packages get 0 for those fees.
-     */
+    // --------------------------------------------------------
+    // GENERATE COMBINED INVOICE
+    // --------------------------------------------------------
+
     public function fromPackages(Request $request)
     {
         $data = $request->validate([
-            'package_ids' => 'required|array|min:2|max:50',
+            'package_ids' =>
+                'required|array|min:2|max:50',
             'package_ids.*' => 'required',
-            'delivery_fee' => 'nullable|numeric|min:0',
-            'handling_fee' => 'nullable|numeric|min:0',
-            'warehouse_fee' => 'nullable|numeric|min:0',
-            'other_fee' => 'nullable|numeric|min:0',
-            'discount' => 'nullable|numeric|min:0',
+            'delivery_fee' =>
+                'nullable|numeric|min:0',
+            'handling_fee' =>
+                'nullable|numeric|min:0',
+            'warehouse_fee' =>
+                'nullable|numeric|min:0',
+            'other_fee' =>
+                'nullable|numeric|min:0',
+            'discount' =>
+                'nullable|numeric|min:0',
             'due_date' => 'nullable|date',
         ]);
 
-        $ids = array_values(array_unique(array_map('strval', $data['package_ids'])));
+        $ids = array_values(
+            array_unique(
+                array_map(
+                    'strval',
+                    $data['package_ids']
+                )
+            )
+        );
+
         if (count($ids) < 2) {
-            return $this->fail('Select at least 2 different packages for a combined bill.', [], 422);
+            return $this->fail(
+                'Select at least 2 different packages '
+                . 'for a combined bill.',
+                [],
+                422
+            );
         }
 
         DB::beginTransaction();
@@ -1604,102 +1834,217 @@ class InvoiceController extends CrudController
             $created = [];
 
             foreach ($ids as $index => $packageId) {
-                $payload = array_filter([
-                    'due_date' => $data['due_date'] ?? null,
-                ], fn ($v) => $v !== null);
+                $payload = array_filter(
+                    [
+                        'due_date' =>
+                            $data['due_date'] ?? null,
+                    ],
+                    fn ($value) => $value !== null
+                );
 
-                foreach (['delivery_fee', 'handling_fee', 'warehouse_fee', 'other_fee', 'discount'] as $field) {
+                foreach ([
+                    'delivery_fee',
+                    'handling_fee',
+                    'warehouse_fee',
+                    'other_fee',
+                    'discount',
+                ] as $field) {
                     if ($index === 0) {
-                        if (array_key_exists($field, $data) && $data[$field] !== null) {
-                            $payload[$field] = $data[$field];
+                        if (
+                            array_key_exists($field, $data)
+                            && $data[$field] !== null
+                        ) {
+                            $payload[$field] =
+                                $data[$field];
                         }
                     } else {
                         $payload[$field] = 0;
                     }
                 }
 
-                $sub = Request::create('/', 'POST', $payload);
-                $sub->setUserResolver($request->getUserResolver());
+                $sub = Request::create(
+                    '/',
+                    'POST',
+                    $payload
+                );
 
-                $response = $this->fromPackage($sub, $packageId);
-                $body = json_decode($response->getContent(), true) ?: [];
+                $sub->setUserResolver(
+                    $request->getUserResolver()
+                );
 
-                if ($response->getStatusCode() >= 400 || empty($body['success'])) {
+                $response = $this->fromPackage(
+                    $sub,
+                    $packageId
+                );
+
+                $body = json_decode(
+                    $response->getContent(),
+                    true
+                ) ?: [];
+
+                if (
+                    $response->getStatusCode() >= 400
+                    || empty($body['success'])
+                ) {
                     DB::rollBack();
+
                     return $this->fail(
-                        'Package ' . $packageId . ': ' . ($body['message'] ?? 'cannot be billed.'),
+                        'Package ' . $packageId . ': '
+                        . (
+                            $body['message']
+                            ?? 'cannot be billed.'
+                        ),
                         $body['errors'] ?? [],
                         422
                     );
                 }
 
-                if (($body['message'] ?? '') !== 'Invoice generated from package successfully.') {
+                if (
+                    ($body['message'] ?? '')
+                    !== 'Invoice generated from package successfully.'
+                ) {
                     DB::rollBack();
+
                     return $this->fail(
-                        'Package ' . $packageId . ' already has an invoice. Remove it from the selection.',
+                        'Package ' . $packageId
+                        . ' already has an invoice. '
+                        . 'Remove it from the selection.',
                         [],
                         422
                     );
                 }
 
-                $invoice = Invoice::where('is_test', false)
-                    ->findOrFail($body['data']['id']);
+                $invoice = Invoice::where(
+                    'is_test',
+                    false
+                )->findOrFail(
+                    $body['data']['id']
+                );
 
                 if ((string) $invoice->status === 'Draft') {
                     DB::rollBack();
+
                     return $this->fail(
-                        'Package ' . $packageId . ' has no active pricing rate (Draft). Set the rate first, then combine.',
+                        'Package ' . $packageId
+                        . ' has no active pricing rate (Draft). '
+                        . 'Set the rate first, then combine.',
                         [],
                         422
                     );
                 }
 
-                if ($created && (string) $invoice->customer_id !== (string) $created[0]->customer_id) {
+                if (
+                    $created
+                    && (string) $invoice->customer_id
+                    !== (string) $created[0]->customer_id
+                ) {
                     DB::rollBack();
-                    return $this->fail('All packages in a combined bill must belong to the same customer.', [], 422);
+
+                    return $this->fail(
+                        'All packages in a combined bill '
+                        . 'must belong to the same customer.',
+                        [],
+                        422
+                    );
                 }
 
                 $created[] = $invoice;
             }
 
             $primary = $created[0];
-            $items = is_array($primary->items) ? $primary->items : [];
+
+            $items = is_array($primary->items)
+                ? $primary->items
+                : [];
+
             $breakdown = [];
             $subtotal = 0.0;
             $discount = 0.0;
             $grand = 0.0;
 
             foreach ($created as $index => $invoice) {
-                $meta = is_array($invoice->meta) ? $invoice->meta : [];
+                $meta = is_array($invoice->meta)
+                    ? $invoice->meta
+                    : [];
+
                 $breakdown[] = [
-                    'package_id' => collect($invoice->items)->pluck('package_id')->filter()->first(),
-                    'tracking_number' => collect($invoice->items)->pluck('tracking_number')->filter()->first(),
-                    'final_cbm' => $meta['final_cbm'] ?? null,
-                    'pricing_type' => $meta['pricing_type'] ?? null,
-                    'rate' => $meta['rate'] ?? null,
-                    'shipping_cost' => $meta['shipping_cost'] ?? null,
+                    'package_id' =>
+                        collect($invoice->items)
+                            ->pluck('package_id')
+                            ->filter()
+                            ->first(),
+                    'tracking_number' =>
+                        collect($invoice->items)
+                            ->pluck('tracking_number')
+                            ->filter()
+                            ->first(),
+                    'final_cbm' =>
+                        $meta['final_cbm'] ?? null,
+                    'pricing_type' =>
+                        $meta['pricing_type'] ?? null,
+                    'rate' =>
+                        $meta['rate'] ?? null,
+                    'shipping_cost' =>
+                        $meta['shipping_cost'] ?? null,
                 ];
 
-                $subtotal += (float) $invoice->subtotal;
-                $discount += (float) $invoice->discount;
-                $grand += (float) $invoice->grand_total;
+                $subtotal += (float) (
+                    $invoice->subtotal ?? 0
+                );
+
+                $discount += (float) (
+                    $invoice->discount ?? 0
+                );
+
+                $grand += (float) (
+                    $invoice->grand_total ?? 0
+                );
 
                 if ($index > 0) {
-                    foreach ((is_array($invoice->items) ? $invoice->items : []) as $item) {
+                    foreach (
+                        (
+                            is_array($invoice->items)
+                                ? $invoice->items
+                                : []
+                        ) as $item
+                    ) {
                         $items[] = $item;
                     }
                 }
             }
 
-            foreach (array_slice($created, 1) as $extra) {
+            // Preserve current combined billing behavior.
+            foreach (
+                array_slice($created, 1)
+                as $extra
+            ) {
                 $extra->delete();
             }
 
-            $meta = is_array($primary->meta) ? $primary->meta : [];
+            $meta = is_array($primary->meta)
+                ? $primary->meta
+                : [];
+
             $meta['combined'] = true;
-            $meta['package_ids'] = collect($items)->pluck('package_id')->filter()->unique()->values()->all();
+
+            $meta['package_ids'] = collect($items)
+                ->pluck('package_id')
+                ->filter()
+                ->unique()
+                ->values()
+                ->all();
+
             $meta['packages'] = $breakdown;
-            $meta['shipping_cost'] = round(collect($breakdown)->sum(fn ($b) => (float) ($b['shipping_cost'] ?? 0)), 2);
+
+            $meta['shipping_cost'] = round(
+                collect($breakdown)->sum(
+                    fn ($row) =>
+                        (float) (
+                            $row['shipping_cost'] ?? 0
+                        )
+                ),
+                2
+            );
 
             $primary->items = $items;
             $primary->meta = $meta;
@@ -1711,14 +2056,27 @@ class InvoiceController extends CrudController
 
             DB::commit();
 
-            $primary->setAttribute('payments', collect());
+            $primary->setAttribute(
+                'payments',
+                collect()
+            );
 
-            return $this->ok($primary, 'Combined invoice generated for ' . count($created) . ' packages.');
+            return $this->ok(
+                $primary,
+                'Combined invoice generated for '
+                . count($created)
+                . ' packages.'
+            );
         } catch (\Throwable $e) {
             DB::rollBack();
+
             throw $e;
         }
     }
+
+    // --------------------------------------------------------
+    // HELPER: FEE ITEM
+    // --------------------------------------------------------
 
     private function feeItem(
         Package $package,
@@ -1727,69 +2085,41 @@ class InvoiceController extends CrudController
         float $finalCbm = 0,
         float $finalWeight = 0
     ): array {
-
         return [
-            'type' =>
-                'fee',
-
-            'package_id' =>
-                $package->id,
-
-            'package_number' =>
-                $package->package_id,
-
-            'description' =>
-                $description,
-
+            'type' => 'fee',
+            'package_id' => $package->id,
+            'package_number' => $package->package_id,
+            'description' => $description,
             'tracking_number' =>
                 $package->tracking_number,
-
             'china_waybill_number' =>
                 $package->china_waybill_number
                 ?: $package->tracking_number,
-
             'hfl_package_code' =>
                 $package->hfl_package_code,
-
-            'quantity' =>
-                1,
-
-            'cbm' =>
-                $finalCbm,
-
-            'weight' =>
-                $finalWeight,
-
-            'unit_price' =>
-                round(
-                    $amount,
-                    2
-                ),
-
-            'amount' =>
-                round(
-                    $amount,
-                    2
-                ),
+            'quantity' => 1,
+            'cbm' => $finalCbm,
+            'weight' => $finalWeight,
+            'unit_price' => round($amount, 2),
+            'amount' => round($amount, 2),
         ];
     }
 
-    private function finalizeInvoiceNumber(
-        int $id
-    ): string {
+    // --------------------------------------------------------
+    // HELPER: INVOICE NUMBER
+    // --------------------------------------------------------
 
-        $date =
-            now()->format('Ymd');
+    private function finalizeInvoiceNumber(int $id): string
+    {
+        $date = now()->format('Ymd');
 
-        $prefix =
-            'HFL-INV-' . $date . '-';
+        $prefix = 'HFL-INV-' . $date . '-';
 
-        return $prefix
-            . str_pad(
-                (string) $id,
-                6,
-                '0',
-                STR_PAD_LEFT
-            );
+        return $prefix . str_pad(
+            (string) $id,
+            6,
+            '0',
+            STR_PAD_LEFT
+        );
     }
 }

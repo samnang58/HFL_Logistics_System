@@ -1,3 +1,4 @@
+
 <?php
 
 use Illuminate\Support\Facades\Route;
@@ -416,6 +417,9 @@ Route::prefix('v1')->group(function () {
 
         Route::patch('/invoices/{id}/billing', [InvoiceController::class, 'updateBilling'])
             ->middleware('permission:invoice.create');
+            // Void incorrect invoice (keep history, do not delete).
+        Route::post('/invoices/{id}/void', [InvoiceController::class, 'void'])
+            ->middleware('permission:invoice.create');
 
         /*
         |--------------------------------------------------------------------------
@@ -459,6 +463,12 @@ Route::prefix('v1')->group(function () {
         |--------------------------------------------------------------------------
         */
 
+        // NEW: Finance dashboard route
+        Route::get('/finance/dashboard', [
+            FinanceController::class,
+            'dashboard',
+        ])->middleware('permission:finance.view');
+
         Route::get('/finance/closings/export', [
             FinancialClosingController::class,
             'export',
@@ -479,8 +489,10 @@ Route::prefix('v1')->group(function () {
             'reopen',
         ])->middleware('permission:finance.reopen');
 
-        Route::get('/finance/dashboard', [FinanceController::class, 'dashboard'])
-            ->middleware('permission:finance.view');
+        Route::get('/finance/payment-tracking', [
+            FinanceController::class,
+            'paymentTracking',
+        ])->middleware('permission:finance.view');
 
         Route::get('/finance/customers/{customerId}/statement', [
             FinanceController::class,
@@ -566,7 +578,7 @@ Route::prefix('v1')->group(function () {
             ]);
         });
 
-        // NEW: Create cash transaction (cash.manage only).
+        // Create cash transaction (cash.manage only).
         Route::post('/cash/transactions', [
             CashTransactionController::class,
             'store',
