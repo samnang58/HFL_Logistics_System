@@ -113,7 +113,7 @@ export default function Login() {
         className="hfl-bg-motion pointer-events-none absolute inset-0 -z-20 bg-cover bg-center"
         style={{
           backgroundImage:
-            "url('/img/login/logistics-3d.png')",
+           `url('${import.meta.env.BASE_URL}img/login/logistics-3d.png')`,
         }}
       />
 
@@ -127,7 +127,7 @@ export default function Login() {
         {/* Company identity on larger screens */}
         <div className="pointer-events-none absolute left-[4%] top-[8%] hidden max-w-[300px] text-center text-[#10365c] xl:block">
           <img
-            src="/img/login/hfl-logo.png"
+            src={`${import.meta.env.BASE_URL}img/login/hfl-logo.png`}
             alt="High Fast Logistics"
             className="hfl-float mx-auto h-32 w-32 object-contain drop-shadow-xl"
           />
@@ -168,7 +168,7 @@ export default function Login() {
             {/* HFL logo */}
             <div className="mb-7 text-center">
               <img
-                src="/img/login/hfl-logo.png"
+                src={`${import.meta.env.BASE_URL}img/login/hfl-logo.png`}
                 alt="High Fast Logistics logo"
                 className="mx-auto h-24 w-24 object-contain"
               />

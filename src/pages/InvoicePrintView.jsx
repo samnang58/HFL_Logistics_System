@@ -172,7 +172,7 @@ export default function InvoicePrintView() {
 
           <div className="paper-logo-area">
               <img
-                src="/img/profile.jpg"
+                src={`${import.meta.env.BASE_URL}img/profile.jpg`}
                 alt="HFL Logistics"
                 className="hfl-logo"
               />

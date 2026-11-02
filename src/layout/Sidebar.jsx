@@ -88,7 +88,7 @@ export default function Sidebar({ mobileOpen, setMobileOpen }) {
         <div className="flex items-center gap-2.5 px-5 h-[65px] border-b border-slate-100 shrink-0">
 
           <img
-            src="/img/profile.jpg"
+            src={`${import.meta.env.BASE_URL}img/profile.jpg`}
             alt="System Admin"
             className="w-9 h-9 rounded-lg object-cover shrink-0"
           />

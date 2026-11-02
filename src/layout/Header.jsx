@@ -156,7 +156,7 @@ export default function Header({ onMenuClick, darkMode, setDarkMode }) {
         <div className="relative" ref={profileRef}>
           <button onClick={() => setShowProfile((v) => !v)} className="flex items-center gap-2 pl-2 border-l border-slate-200 h-9">
             <img
-              src="/img/profile.jpg"
+              src={`${import.meta.env.BASE_URL}img/profile.jpg`}
               alt="System Admin"
               className="w-8 h-8 rounded-full object-cover shrink-0"
             />
