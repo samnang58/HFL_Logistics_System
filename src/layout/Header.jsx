@@ -175,7 +175,7 @@ export default function Header({ onMenuClick, darkMode, setDarkMode }) {
                   onClick={() => {
                     if (label === "Log Out") {
                       localStorage.removeItem("hfl_auth_token");
-                      window.location.href = "/login";
+                      window.location.href = `${import.meta.env.BASE_URL}login`;
                     }
                   }}
                   className="w-full text-left px-3 py-2 text-sm text-slate-600 hover:bg-slate-50"
