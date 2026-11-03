@@ -13,9 +13,9 @@ class BillingSettingsController extends ApiController
     {
         return $this->ok([
             'aba_khqr_url' => $this->assetUrl($request),
-            'account_name' => 'SAMNANG PHAN',
-            'khr_account' => '005 363 934',
-            'usd_account' => '005 363 931',
+            'account_name' => 'HFL Logistics by G.HOUT',
+            'khr_account' => '800 700 888',
+            'usd_account' => '800 700 888',
         ], 'Billing settings retrieved');
     }
 

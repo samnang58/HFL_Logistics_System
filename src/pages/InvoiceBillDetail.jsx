@@ -134,6 +134,12 @@ export default function InvoiceBillDetail() {
         handling_fee: snap.handling_fee ?? meta.handling_fee ?? data?.items?.find((x) => x.description === 'Handling Fee')?.amount ?? 0,
         warehouse_fee: snap.warehouse_fee ?? meta.warehouse_fee ?? data?.items?.find((x) => x.description === 'Warehouse Fee')?.amount ?? 0,
         other_fee: snap.other_fee ?? meta.other_fee ?? data?.items?.find((x) => x.description === 'Other Fee')?.amount ?? 0,
+        local_delivery_fee: snap.local_delivery_fee ?? meta.local_delivery_fee ?? data?.items?.find((x) => x.description === 'Local Delivery Fee')?.amount ?? 0,
+        china_tax_refund_fee: snap.china_tax_refund_fee ?? meta.china_tax_refund_fee ?? data?.items?.find((x) => x.description === 'China Tax Refund Fee')?.amount ?? 0,
+        cambodia_crane_fee: snap.cambodia_crane_fee ?? meta.cambodia_crane_fee ?? data?.items?.find((x) => x.description === 'Cambodia Crane Fee')?.amount ?? 0,
+        china_pickup_fee: snap.china_pickup_fee ?? meta.china_pickup_fee ?? data?.items?.find((x) => x.description === 'China Pickup Fee')?.amount ?? 0,
+        china_document_review_fee: snap.china_document_review_fee ?? meta.china_document_review_fee ?? data?.items?.find((x) => x.description === 'China Document Review Fee')?.amount ?? 0,
+        wood_crating_fee: snap.wood_crating_fee ?? meta.wood_crating_fee ?? data?.items?.find((x) => x.description === 'Wood Crating Fee')?.amount ?? 0,
         discount: data?.discount ?? snap.discount ?? meta.discount ?? 0,
         due_date: data?.due_date ?? '',
       });
@@ -155,7 +161,23 @@ export default function InvoiceBillDetail() {
     const minimumCbm = Number(invoice?.pricing_snapshot?.minimum_cbm || 0);
     const chargeable = rateType === 'KG' ? weight : Math.max(cbm, minimumCbm);
     const shipping = chargeable * rate;
-    const fees = Number(form.delivery_fee || 0) + Number(form.handling_fee || 0) + Number(form.warehouse_fee || 0) + Number(form.other_fee || 0);
+    const feeKeys = [
+      'delivery_fee',
+      'handling_fee',
+      'warehouse_fee',
+      'other_fee',
+      'local_delivery_fee',
+      'china_tax_refund_fee',
+      'cambodia_crane_fee',
+      'china_pickup_fee',
+      'china_document_review_fee',
+      'wood_crating_fee',
+    ];
+
+    const fees = feeKeys.reduce(
+      (sum, key) => sum + Number(form[key] || 0),
+      0
+    );
     const discount = Math.min(shipping + fees, Number(form.discount || 0));
     const total = Math.max(0, shipping + fees - discount);
     const paid = Number(invoice?.paid_amount ?? 0);
@@ -175,6 +197,12 @@ export default function InvoiceBillDetail() {
         handling_fee: Number(form.handling_fee || 0),
         warehouse_fee: Number(form.warehouse_fee || 0),
         other_fee: Number(form.other_fee || 0),
+        local_delivery_fee: Number(form.local_delivery_fee || 0),
+        china_tax_refund_fee: Number(form.china_tax_refund_fee || 0),
+        cambodia_crane_fee: Number(form.cambodia_crane_fee || 0),
+        china_pickup_fee: Number(form.china_pickup_fee || 0),
+        china_document_review_fee: Number(form.china_document_review_fee || 0),
+        wood_crating_fee: Number(form.wood_crating_fee || 0),
         discount: Number(form.discount || 0),
         due_date: form.due_date || null,
       });
@@ -235,17 +263,85 @@ export default function InvoiceBillDetail() {
           <Field label="Final Weight (KG)" value={form.final_weight} onChange={(v) => setForm({ ...form, final_weight: v })} />
           <label className="block"><span className="text-xs font-semibold text-slate-600">Pricing Type</span><select value={form.pricing_type} onChange={(e) => setForm({ ...form, pricing_type: e.target.value })} className="mt-1 w-full h-10 rounded-lg border px-3"><option value="GC">GC</option><option value="SC">SC</option></select></label>
           <Field label="Current Rate / CBM *" value={form.rate} onChange={(v) => setForm({ ...form, rate: v })} /><div className="md:col-span-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">Logistics rates are variable. Enter the actual rate agreed for this shipment now; this rate is saved with this invoice and will not change when future rates change.</div>
-          <Field label="Delivery Fee" value={form.delivery_fee} onChange={(v) => setForm({ ...form, delivery_fee: v })} />
-          <Field label="Handling Fee" value={form.handling_fee} onChange={(v) => setForm({ ...form, handling_fee: v })} />
-          <Field label="Warehouse Fee" value={form.warehouse_fee} onChange={(v) => setForm({ ...form, warehouse_fee: v })} />
-          <Field label="Other Fee" value={form.other_fee} onChange={(v) => setForm({ ...form, other_fee: v })} />
+          <Field
+            label="ថ្លៃដឹកក្នុងស្រុក / 本地配送"
+            value={form.local_delivery_fee}
+            onChange={(v) =>
+              setForm({ ...form, local_delivery_fee: v })
+            }
+          />
+          <Field
+            label="ឡានស្ទូចនៅខ្មែរ / 金边吊车"
+            value={form.cambodia_crane_fee}
+            onChange={(v) =>
+              setForm({ ...form, cambodia_crane_fee: v })
+            }
+          />
+          <Field
+            label="ថ្លៃឃ្លាំង / 仓储费"
+            value={form.warehouse_fee}
+            onChange={(v) =>
+              setForm({ ...form, warehouse_fee: v })
+            }
+          />
+          <Field
+            label="ថ្លៃវាយកេះឈើ / 打木架"
+            value={form.wood_crating_fee}
+            onChange={(v) =>
+              setForm({ ...form, wood_crating_fee: v })
+            }
+          />
+          <Field
+            label="ថ្លៃដកពន្ធនៅចិន / 报关退税"
+            value={form.china_tax_refund_fee}
+            onChange={(v) =>
+              setForm({ ...form, china_tax_refund_fee: v })
+            }
+          />
+          <Field
+            label="ថ្លៃទៅយកទំនិញនៅចិន / 提货费"
+            value={form.china_pickup_fee}
+            onChange={(v) =>
+              setForm({ ...form, china_pickup_fee: v })
+            }
+          />
+          <Field
+            label="ថ្លៃពិនិត្យឯកសារនៅចិន / 中国文件审核费"
+            value={form.china_document_review_fee}
+            onChange={(v) =>
+              setForm({ ...form, china_document_review_fee: v })
+            }
+          />
+          <Field
+            label="ថ្លៃផ្សេងៗ / 其他费用"
+            value={form.other_fee}
+            onChange={(v) =>
+              setForm({ ...form, other_fee: v })
+            }
+          />
+          {(
+            Number(form.delivery_fee || 0) +
+            Number(form.handling_fee || 0)
+          ) > 0 && (
+            <div className="md:col-span-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              វិក្កយបត្រចាស់នេះមានថ្លៃសេវាបន្ថែម
+              ដែលត្រូវបានរក្សាទុកក្នុងប្រព័ន្ធ។
+              ចំនួននេះនៅតែត្រូវបានរាប់ក្នុងតម្លៃសរុប៖
+              <strong className="ml-2">
+                {money(
+                  Number(form.delivery_fee || 0) +
+                  Number(form.handling_fee || 0)
+                )}
+              </strong>
+            </div>
+          )}
           <Field label="Discount" value={form.discount} onChange={(v) => setForm({ ...form, discount: v })} />
           <label className="block"><span className="text-xs font-semibold text-slate-600">Due Date</span><input type="date" value={form.due_date || ''} onChange={(e) => setForm({ ...form, due_date: e.target.value })} className="mt-1 w-full h-10 rounded-lg border px-3" /></label>
         </div>
         <div className="mt-5 grid md:grid-cols-4 gap-3">
           <div className="rounded-xl bg-slate-50 border p-4"><div className="text-xs text-slate-500">Shipping Cost</div><div className="text-lg font-bold">{money(preview.shipping)}</div></div>
           <div className="rounded-xl bg-slate-50 border p-4"><div className="text-xs text-slate-500">Fees</div><div className="text-lg font-bold">{money(preview.fees)}</div></div>
-          <div className="rounded-xl bg-blue-50 border border-blue-100 p-4"><div className="text-xs text-blue-700">New Grand Total</div><div className="text-lg font-bold text-blue-800">{money(preview.total)}</div></div>
+          <div className="rounded-xl bg-blue-50 border border-blue-100 p-4"><div className="text-xs text-blue-700">តម្លៃបង់ប្រាក់សរុប / 合计</div><div className="text-lg font-bold text-blue-800">{money(preview.total)}</div></div>
           <div className="rounded-xl bg-orange-50 border border-orange-100 p-4"><div className="text-xs text-orange-700">New Outstanding</div><div className="text-lg font-bold text-orange-800">{money(preview.outstanding)}</div></div>
         </div>
         <div className="mt-4 flex justify-end"><button onClick={save} disabled={saving} className="h-10 px-5 rounded-lg bg-blue-600 text-white font-semibold inline-flex items-center gap-2 disabled:opacity-50"><Save size={16} /> {saving ? 'Saving...' : 'Save Billing Changes'}</button></div>

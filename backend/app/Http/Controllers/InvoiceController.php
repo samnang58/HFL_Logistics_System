@@ -430,6 +430,12 @@ class InvoiceController extends CrudController
             'handling_fee' => 'nullable|numeric|min:0',
             'warehouse_fee' => 'nullable|numeric|min:0',
             'other_fee' => 'nullable|numeric|min:0',
+            'local_delivery_fee' => 'nullable|numeric|min:0',
+            'china_tax_refund_fee' => 'nullable|numeric|min:0',
+            'cambodia_crane_fee' => 'nullable|numeric|min:0',
+            'china_pickup_fee' => 'nullable|numeric|min:0',
+            'china_document_review_fee' => 'nullable|numeric|min:0',
+            'wood_crating_fee' => 'nullable|numeric|min:0',
             'discount' => 'nullable|numeric|min:0',
             'due_date' => 'nullable|date',
         ]);
@@ -542,6 +548,47 @@ class InvoiceController extends CrudController
                 $data['other_fee'] ?? 0
             );
 
+            $newFees = [
+                'local_delivery_fee' => (float) (
+                    $data['local_delivery_fee']
+                    ?? $snapshot['local_delivery_fee']
+                    ?? $meta['local_delivery_fee']
+                    ?? 0
+                ),
+                'china_tax_refund_fee' => (float) (
+                    $data['china_tax_refund_fee']
+                    ?? $snapshot['china_tax_refund_fee']
+                    ?? $meta['china_tax_refund_fee']
+                    ?? 0
+                ),
+                'cambodia_crane_fee' => (float) (
+                    $data['cambodia_crane_fee']
+                    ?? $snapshot['cambodia_crane_fee']
+                    ?? $meta['cambodia_crane_fee']
+                    ?? 0
+                ),
+                'china_pickup_fee' => (float) (
+                    $data['china_pickup_fee']
+                    ?? $snapshot['china_pickup_fee']
+                    ?? $meta['china_pickup_fee']
+                    ?? 0
+                ),
+                'wood_crating_fee' => (float) (
+                    $data['wood_crating_fee']
+                    ?? $snapshot['wood_crating_fee']
+                    ?? $meta['wood_crating_fee']
+                    ?? 0
+                ),
+                'china_document_review_fee' => (float) (
+                    $data['china_document_review_fee']
+                    ?? $snapshot['china_document_review_fee']
+                    ?? $meta['china_document_review_fee']
+                    ?? 0
+                ),
+            ];
+
+            $newFeesTotal = array_sum($newFees);
+
             $discount = (float) (
                 $data['discount'] ?? 0
             );
@@ -549,7 +596,8 @@ class InvoiceController extends CrudController
             $feeSubtotal =
                 $deliveryFee
                 + $handlingFee
-                + $warehouseFee;
+                + $warehouseFee
+                + $newFeesTotal;
 
             $discount = min(
                 $feeSubtotal + $shippingCost + $otherFee,
@@ -666,6 +714,12 @@ class InvoiceController extends CrudController
                     ['Handling Fee', $handlingFee],
                     ['Warehouse Fee', $warehouseFee],
                     ['Other Fee', $otherFee],
+                    ['Local Delivery Fee', $newFees['local_delivery_fee']],
+                    ['China Tax Refund Fee', $newFees['china_tax_refund_fee']],
+                    ['Cambodia Crane Fee', $newFees['cambodia_crane_fee']],
+                    ['China Pickup Fee', $newFees['china_pickup_fee']],
+                    ['China Document Review Fee', $newFees['china_document_review_fee']],
+                    ['Wood Crating Fee', $newFees['wood_crating_fee']],
                 ] as [$label, $amount]) {
                     if ($amount > 0) {
                         $items[] = $this->feeItem(
@@ -719,6 +773,12 @@ class InvoiceController extends CrudController
             $meta['warehouse_fee'] = $warehouseFee;
             $meta['other_fee'] = $otherFee;
             $meta['discount'] = $discount;
+
+            // Save additional fees in existing JSON fields.
+            foreach ($newFees as $feeKey => $feeAmount) {
+                $snapshot[$feeKey] = $feeAmount;
+                $meta[$feeKey] = $feeAmount;
+            }
 
             $invoice->items = $items;
             $invoice->pricing_snapshot = $snapshot;

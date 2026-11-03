@@ -8,7 +8,10 @@ class Expense extends BaseModel
 {
     protected $casts = [
         'amount' => 'decimal:4',
-        'expense_date' => 'date',
+
+        // Return date as YYYY-MM-DD without UTC shifting.
+        'expense_date' => 'date:Y-m-d',
+
         'paid_at' => 'datetime',
     ];
 

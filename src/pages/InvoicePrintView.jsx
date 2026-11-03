@@ -1,17 +1,129 @@
-import React, { useEffect, useState } from "react";
-import { ArrowLeft, Printer } from "lucide-react";
-import { useNavigate, useParams } from "react-router-dom";
 
-import { getInvoice } from "../services/billingApi.js";
-import apiClient from "../api/apiClient.js";
+import React, { useEffect, useMemo, useState } from 'react';
+import { ArrowLeft, Printer, RefreshCw } from 'lucide-react';
+import { useNavigate, useParams } from 'react-router-dom';
 
-import "./invoice-print.css";
+import { getInvoice } from '../services/billingApi.js';
+import apiClient from '../api/apiClient.js';
 
-const money = (value) =>
-  `$${Number(value || 0).toFixed(2)}`;
+import './invoice-print.css';
 
-const fixed = (value, digits = 3) =>
-  Number(value || 0).toFixed(digits);
+// ============================================================
+// HELPERS
+// ============================================================
+
+const num = value => Number(value || 0);
+
+const money = value => `$${num(value).toFixed(2)}`;
+
+const decimal = (value, digits = 3) =>
+  num(value).toFixed(digits);
+
+const text = value =>
+  value === null || value === undefined || value === ''
+    ? '—'
+    : String(value);
+
+const unwrap = response =>
+  response?.data?.data ??
+  response?.data ??
+  response ??
+  {};
+
+// Preserve calendar dates without UTC timezone shifting.
+function printDate(value) {
+  if (!value) return '—';
+
+  const match = String(value).match(
+    /^(\d{4})-(\d{2})-(\d{2})/
+  );
+
+  if (match) {
+    return `${match[3]}/${match[2]}/${match[1]}`;
+  }
+
+  const date = new Date(value);
+
+  return Number.isNaN(date.getTime())
+    ? '—'
+    : date.toLocaleDateString('en-GB');
+}
+
+// ============================================================
+// SHIPPING MODE
+// ============================================================
+
+function ShippingOption({
+  active,
+  title,
+  subtitle,
+  badge,
+}) {
+  return (
+    <div
+      className={`hfl-mode-line ${
+        active ? 'is-active' : ''
+      }`}
+    >
+      <span
+        className={`hfl-mode-mark ${
+          active ? 'is-active' : ''
+        }`}
+      >
+        {active ? '✓' : ''}
+      </span>
+
+      <span>
+        {title} <small>{subtitle}</small>
+      </span>
+
+      {active && badge && (
+        <strong className="hfl-mode-badge">
+          {badge}
+        </strong>
+      )}
+    </div>
+  );
+}
+
+// ============================================================
+// INVOICE PRINT PAGE
+// ============================================================
+
+const HFL_FEE_LABELS = {
+  'Warehouse Fee': 'ថ្លៃឃ្លាំង / 仓储费',
+  'Other Fee': 'ថ្លៃផ្សេងៗ / 其他费用',
+  'Local Delivery Fee': 'ថ្លៃដឹកក្នុងស្រុក / 本地配送',
+  'China Tax Refund Fee': 'ថ្លៃដកពន្ធនៅចិន / 报关退税',
+  'Cambodia Crane Fee': 'ឡានស្ទូចនៅខ្មែរ / 金边吊车',
+  'China Pickup Fee': 'ថ្លៃទៅយកទំនិញនៅចិន / 提货费',
+  'Wood Crating Fee': 'ថ្លៃវាយកេះឈើ / 打木架',
+
+  'China Document Review Fee': 'ថ្លៃពិនិត្យឯកសារនៅចិន / 中国文件审核费',};
+
+const HFL_FEE_PRINT_ORDER = [
+  'Local Delivery Fee',
+  'Cambodia Crane Fee',
+  'Warehouse Fee',
+  'Wood Crating Fee',
+  'China Tax Refund Fee',
+  'China Pickup Fee',
+  'China Document Review Fee',
+  'Other Fee',
+];
+
+const hflFeePrintIndex = (fee) => {
+  const name = String(fee?.description || '').trim();
+
+  const index = HFL_FEE_PRINT_ORDER.findIndex(
+    (key) =>
+      name === key ||
+      name === HFL_FEE_LABELS[key] ||
+      name.startsWith(key + ' /')
+  );
+
+  return index >= 0 ? index : 100;
+};
 
 export default function InvoicePrintView() {
   const { id } = useParams();
@@ -20,126 +132,224 @@ export default function InvoicePrintView() {
   const [invoice, setInvoice] = useState(null);
   const [settings, setSettings] = useState({});
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [error, setError] = useState('');
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
-    loadInvoice();
-  }, [id]);
+    let active = true;
 
-  async function loadInvoice() {
-    try {
+    async function load() {
       setLoading(true);
+      setError('');
 
+      // Staff may lack billing.settings permission.
+      // The invoice should still load and be printable.
       const [invoiceResult, settingsResult] =
-        await Promise.all([
+        await Promise.allSettled([
           getInvoice(id),
-          apiClient.get("/billing/settings"),
+          apiClient.get('/billing/settings'),
         ]);
 
-      setInvoice(invoiceResult);
+      if (!active) return;
 
-      setSettings(
-        settingsResult?.data ||
-          settingsResult ||
-          {}
-      );
-    } catch (err) {
-      setError(
-        err?.message || "Unable to load invoice."
-      );
-    } finally {
+      if (invoiceResult.status === 'rejected') {
+        setError(
+          invoiceResult.reason?.message ||
+          'Unable to load invoice.'
+        );
+
+        setInvoice(null);
+      } else {
+        setInvoice(unwrap(invoiceResult.value));
+
+        setSettings(
+          settingsResult.status === 'fulfilled'
+            ? unwrap(settingsResult.value)
+            : {}
+        );
+      }
+
       setLoading(false);
     }
-  }
+
+    load();
+
+    return () => {
+      active = false;
+    };
+  }, [id, refreshKey]);
+
+  const items = useMemo(
+    () => (
+      Array.isArray(invoice?.items)
+        ? invoice.items
+        : []
+    ),
+    [invoice]
+  );
+
+  const meta =
+    invoice?.meta &&
+    typeof invoice.meta === 'object'
+      ? invoice.meta
+      : {};
+
+  // Product/shipping lines in the main table.
+  const shippingRows = items.filter(
+    row =>
+      String(row?.type || '').toLowerCase() !== 'fee'
+  );
+
+  // Additional charges appear in the bottom-right area.
+  const feeRows = items.filter(
+    row =>
+      String(row?.type || '').toLowerCase() === 'fee'
+  );
+
+  const fallbackFees = [
+    ['Delivery Fee / 本地配送', meta.delivery_fee],
+    ['Handling Fee / 搬运费', meta.handling_fee],
+    ['Warehouse Fee', meta.warehouse_fee],
+    ['ថ្លៃផ្សេងៗ / 其他费用', meta.other_fee],
+    ['Local Delivery Fee', meta.local_delivery_fee],
+    ['China Tax Refund Fee', meta.china_tax_refund_fee],
+    ['Cambodia Crane Fee', meta.cambodia_crane_fee],
+    ['China Pickup Fee', meta.china_pickup_fee],
+    ['China Document Review Fee', meta.china_document_review_fee],
+    ['Wood Crating Fee', meta.wood_crating_fee],
+  ]
+    .filter(([, amount]) => num(amount) > 0)
+    .map(([description, amount]) => ({
+      description,
+      amount,
+    }));
+
+  const fees = feeRows.length
+    ? feeRows
+    : fallbackFees;
+
+  const invoiceNo = text(
+    invoice?.invoice_no ??
+    invoice?.invoiceNo
+  );
+
+  const grandTotal = num(
+    invoice?.grand_total ??
+    invoice?.grandTotal
+  );
+
+  const discount = num(invoice?.discount);
+  const tax = num(invoice?.tax);
+
+  const status = String(
+    invoice?.status || ''
+  ).toLowerCase();
+
+  const isVoided = [
+    'void',
+    'voided',
+    'cancelled',
+  ].includes(status);
+
+  const isDraft = status === 'draft';
+
+  const canPrint =
+    !loading &&
+    !error &&
+    invoice &&
+    !isVoided &&
+    !isDraft;
+
+  // Determine shipping mode from actual invoice data.
+  const rawMode = String(
+    meta.shipping_method ||
+    meta.shipping_mode ||
+    invoice?.pricing_snapshot?.shipping_mode ||
+    ''
+  ).toUpperCase();
+
+  const mode =
+    /LAND|ROAD|TRUCK/.test(rawMode)
+      ? 'LAND'
+      : /SEA|OCEAN/.test(rawMode)
+        ? 'SEA'
+        : /AIR/.test(rawMode)
+          ? 'AIR'
+          : 'OTHER';
+
+  const pricingType = String(
+    meta.pricing_type ||
+    invoice?.pricing_snapshot?.pricing_type ||
+    ''
+  ).toUpperCase();
+
+  const origin = text(meta.origin);
+  const destination = text(meta.destination);
+
+  const date = printDate(
+    meta.bill_date ||
+    invoice?.invoice_date ||
+    invoice?.created_at
+  );
+
+  const container = text(
+    meta.container_number ||
+    shippingRows.find(
+      row => row.container_number
+    )?.container_number
+  );
+
+  // Show at least 3 rows like the sample invoice.
+  const rowsToShow = Math.max(
+    3,
+    shippingRows.length
+  );
+
+  const gridRows = Array.from(
+    { length: rowsToShow },
+    (_, i) => shippingRows[i] || null
+  );
+
+  // Bank values are loaded from Laravel billing settings.
+  const bankAccount =
+    settings.khr_account ||
+    settings.aba_account ||
+    '';
+
+  const bankName =
+    settings.account_name ||
+    '';
+
+  // ----------------------------------------------------------
+  // LOADING / ERROR
+  // ----------------------------------------------------------
 
   if (loading) {
     return (
-      <div className="bill-loading">
-        Loading Bill...
+      <div className="hfl-print-message">
+        Loading invoice...
       </div>
     );
   }
 
   if (error || !invoice) {
     return (
-      <div className="bill-loading bill-error">
-        {error || "Bill not found."}
+      <div className="hfl-print-message hfl-print-error">
+        {error || 'Invoice not found.'}
       </div>
     );
   }
 
-  const items = Array.isArray(invoice.items)
-    ? invoice.items
-    : [];
-
-  const payments = Array.isArray(invoice.payments)
-    ? invoice.payments
-    : [];
-
-  const payment = payments[0] || {};
-
-  const meta = invoice.meta || {};
-
-  const dateValue =
-    invoice.created_at ||
-    invoice.invoice_date ||
-    meta.bill_date;
-
-  const dateText = dateValue
-    ? new Date(dateValue).toLocaleDateString("en-GB")
-    : "—";
-
-  const subtotal = Number(
-    invoice.subtotal || 0
-  );
-
-  const discount = Number(
-    invoice.discount || 0
-  );
-
-  const grandTotal = Number(
-    invoice.grand_total ??
-      invoice.grandTotal ??
-      0
-  );
-
-  const paidAmount = Number(
-    invoice.paid_amount ??
-      invoice.paidAmount ??
-      0
-  );
-
-  const outstanding = Number(
-    invoice.outstanding || 0
-  );
-
-  const totalCbm = items.reduce(
-    (sum, item) =>
-      sum + Number(item.cbm || 0),
-    0
-  );
-
-  const totalWeight = items.reduce(
-    (sum, item) =>
-      sum + Number(item.weight || 0),
-    0
-  );
-
-  const printBill = () => {
-    window.print();
-  };
+  // ==========================================================
+  // RENDER INVOICE
+  // ==========================================================
 
   return (
-    <div className="bill-print-wrapper">
-
-      {/* =========================
-          BUTTONS
-      ========================== */}
-
-      <div className="bill-toolbar no-print">
-
+    <div className="hfl-print-root">
+      {/* PRINT TOOLBAR — hidden on paper */}
+      <div className="hfl-print-toolbar">
         <button
-          className="bill-toolbar-btn"
+          type="button"
           onClick={() => navigate(-1)}
         >
           <ArrowLeft size={16} />
@@ -147,544 +357,487 @@ export default function InvoicePrintView() {
         </button>
 
         <button
-          className="bill-toolbar-btn primary"
-          onClick={printBill}
+          type="button"
+          onClick={() =>
+            setRefreshKey(value => value + 1)
+          }
         >
-          <Printer size={16} />
-          Print Bill
+          <RefreshCw size={16} />
+          Refresh
         </button>
 
+        <button
+          type="button"
+          className="primary"
+          onClick={() => window.print()}
+          disabled={!canPrint}
+        >
+          <Printer size={16} />
+
+          {isVoided
+            ? 'Voided Invoice'
+            : isDraft
+              ? 'Confirm Rate First'
+              : 'Print Invoice'}
+        </button>
       </div>
 
-      {/* =========================
-          A5 LANDSCAPE
-      ========================== */}
+      {/* PRINTABLE PAPER */}
+      <main className="hfl-print-sheet">
+        {/* ============================================= */}
+        {/* COMPANY HEADER                                */}
+        {/* ============================================= */}
 
-      <main className="a5-bill">
-
-        {/* =========================
-            HEADER
-        ========================== */}
-
-        <header className="paper-header">
-
+        <header className="hfl-print-header">
           {/* LOGO */}
+          <div className="hfl-print-logo">
+            <img
+              src={`${import.meta.env.BASE_URL}img/profile.jpg`}
+              alt="HFL Logistics logo"
+            />
 
-          <div className="paper-logo-area">
-              <img
-                src={`${import.meta.env.BASE_URL}img/profile.jpg`}
-                alt="HFL Logistics"
-                className="hfl-logo"
-              />
+            <strong>
+              HIGH FAST LOGISTICS
+            </strong>
 
-              <div className="logo-company">
-                
-              
-              </div>
-            </div>
+            <small>
+              海发国际物流
+            </small>
+          </div>
 
-          {/* COMPANY */}
-
-          <div className="paper-company-title">
-
-            <div className="khmer-company">
+          {/* COMPANY NAME */}
+          <div className="hfl-print-company">
+            <div className="kh">
               ក្រុមហ៊ុនដឹកជញ្ជូនពីចិនមកខ្មែរ
             </div>
 
-            <div className="english-company">
+            <div className="en">
               HFL LOGISTICS CO., LTD.
             </div>
 
-            <div className="chinese-company">
+            <div className="zh">
               海发物流有限公司
             </div>
-
           </div>
 
-          {/* INVOICE */}
-
-          <div className="paper-invoice-title">
-
-            <div>
-              វិក័យប័ត្រ
-            </div>
-
-            <span>
-              发票
-            </span>
-
+          {/* INVOICE TITLE */}
+          <div className="hfl-print-heading">
+            <span>វិក្កយបត្រ</span>
+            <span>发票</span>
+            <strong>INVOICE</strong>
           </div>
-
         </header>
 
-        {/* =========================
-            CUSTOMER / STATUS / ABA
-        ========================== */}
+        {/* ============================================= */}
+        {/* CUSTOMER + SHIPPING + BANK                    */}
+        {/* ============================================= */}
 
-        <section className="top-info">
-
-          {/* CUSTOMER */}
-
-          <div className="customer-info">
-
-            <div className="form-row">
-              <span>
-                អតិថិជន / 客户
-              </span>
+        <div className="hfl-print-top">
+          {/* CUSTOMER INFORMATION */}
+          <div className="hfl-customer-box">
+            <div>
+              <span>Customer Name:</span>
 
               <strong>
-                {invoice.customer_name || "—"}
+                {text(
+                  invoice.customer_name ??
+                  invoice.customerName
+                )}
               </strong>
             </div>
 
-            <div className="form-row">
-              <span>
-                លេខទូ / 柜号
-              </span>
+            <div>
+              <span>Customer ID:</span>
 
-              <strong>
-                {meta.container_number || "—"}
+              <strong className="blue">
+                {text(
+                  invoice.customer_id ??
+                  invoice.customerId
+                )}
               </strong>
             </div>
 
-            <div className="form-row">
-              <span>
-                Date
-              </span>
+            <div>
+              <span>Container No:</span>
 
-              <strong>
-                {dateText}
+              <strong className="hfl-chip">
+                {container}
               </strong>
             </div>
 
-            <div className="form-row">
-              <span>
-                Customer ID
-              </span>
+            <div>
+              <span>Route Corridor:</span>
 
-              <strong>
-                {invoice.customer_id || "—"}
+              <strong className="blue">
+                {origin} → {destination}
               </strong>
             </div>
 
+            <div>
+              <span>Invoice Date:</span>
+
+              <strong>{date}</strong>
+            </div>
           </div>
 
-          {/* STATUS */}
-
-          <div className="status-area">
-
-            <div className="status-row">
-              <span>
-                ផ្លូវគោក / 直邮
-              </span>
-
-              <b className="checkbox">
-                
-              </b>
+          {/* SHIPPING MODE */}
+          <div className="hfl-mode-box">
+            <div className="hfl-mode-title">
+              SHIPPING MODE / ដឹកជញ្ជូន / 运输方式
             </div>
 
-            <div className="status-row">
-              <span>
-                ផ្លូវសមុទ្រ / 海运
-              </span>
+            <ShippingOption
+              active={mode === 'LAND'}
+              title="Land"
+              subtitle="/ 直邮 (ផ្លូវគោក)"
+              badge={pricingType}
+            />
 
-              <b className="checkbox" />
-            </div>
+            <ShippingOption
+              active={mode === 'SEA'}
+              title="Sea"
+              subtitle="/ 海运 (ផ្លូវទឹក)"
+              badge={pricingType}
+            />
 
-            <div className="status-row">
-              <span>
-                ផ្លូវអាកាស / 空运
-              </span>
+            <ShippingOption
+              active={mode === 'AIR'}
+              title="Air"
+              subtitle="/ 空运 (ផ្លូវអាកាស)"
+              badge={pricingType}
+            />
 
-              <b className="checkbox" />
-            </div>
-
-            <div className="status-row">
-              <span>
-                ផ្លូវផ្សេងៗ / 其他
-              </span>
-
-              <b className="checkbox" />
-            </div>
-
+            <ShippingOption
+              active={mode === 'OTHER'}
+              title="Other"
+              subtitle="/ 其他"
+              badge={pricingType}
+            />
           </div>
 
-          {/* NO + ABA QR */}
-
-          <div className="document-info">
-
-            <div className="doc-no">
-              No:
-              <strong>
-                {invoice.invoice_no || "—"}
-              </strong>
+          {/* INVOICE NUMBER / ABA */}
+          <div className="hfl-bank-box">
+            <div className="hfl-invoice-label">
+              INVOICE NUMBER:
             </div>
 
-            <div className="aba-payment">
+            <strong className="hfl-invoice-number">
+              {invoiceNo}
+            </strong>
 
-              <div className="aba-details">
+            <div className="hfl-bank-title">
+              ▣ ABA Bank (KHR)
+            </div>
 
-                <div className="aba-label">
-                  គណនី ABA
-                </div>
+            <div className="hfl-bank-row">
+              <div className="hfl-bank-details">
+                <span>A/C Number:</span>
 
-                <div className="aba-account">
-                  {settings.aba_account ||
-                    "800 700 888"}
-                </div>
+                <strong className="hfl-account-number">
+                  {bankAccount || '—'}
+                </strong>
 
-                <div className="aba-holder">
-                  {settings.account_name ||
-                    "GOV HAK KHOUT"}
-                </div>
+                <span>Account Name:</span>
 
+                <strong className="hfl-account-name">
+                  {bankName || '—'}
+                </strong>
               </div>
 
-              {settings.aba_khqr_url ? (
-                <div className="aba-qr">
-                  <img
-                    src={settings.aba_khqr_url}
-                    alt="ABA KHQR"
-                  />
-                </div>
-              ) : (
-                <div className="aba-qr-empty">
-                  ABA
-                  <br />
-                  KHQR
-                </div>
-              )}
-
             </div>
-
           </div>
+        </div>
 
-        </section>
+        {/* ============================================= */}
+        {/* SHIPPING ITEM TABLE                           */}
+        {/* ============================================= */}
 
-        {/* =========================
-            SHIPMENT INFORMATION
-        ========================== */}
-
-        <section className="shipment-row">
-
-          <div>
-            Origin:
-            <strong>
-              {meta.origin || "China"}
-            </strong>
-          </div>
-
-          <div>
-            Destination:
-            <strong>
-              {meta.destination || "Cambodia"}
-            </strong>
-          </div>
-
-          <div>
-            Shipment:
-            <strong>
-              {meta.shipment_number || "—"}
-            </strong>
-          </div>
-
-          <div>
-            Tracking:
-            <strong>
-              {meta.tracking_number || "—"}
-            </strong>
-          </div>
-
-        </section>
-
-        {/* =========================
-            TABLE
-        ========================== */}
-
-        <table className="paper-table">
+        <table className="hfl-products-table">
+          <colgroup>
+            <col style={{ width: '6%' }} />
+            <col style={{ width: '21%' }} />
+            <col style={{ width: '23%' }} />
+            <col style={{ width: '16%' }} />
+            <col style={{ width: '7%' }} />
+            <col style={{ width: '8%' }} />
+            <col style={{ width: '7%' }} />
+            <col style={{ width: '6%' }} />
+            <col style={{ width: '6%' }} />
+          </colgroup>
 
           <thead>
-
             <tr>
-
               <th>
                 ល.រ
                 <br />
-                No
+                NO
               </th>
 
               <th>
                 លេខទំនិញ
                 <br />
-                快递单号
+                Tracking No.
+              </th>
+
+              <th>
+                លេខកុងតឺន័រ / 运单
+                <br />
+                China Waybill
               </th>
 
               <th>
                 ឈ្មោះទំនិញ
                 <br />
-                品名
-              </th>
-
-              <th>
-                លេខកញ្ចប់
-                <br />
-                Package
+                Description
               </th>
 
               <th>
                 ចំនួន
                 <br />
-                数量
+                Qty
               </th>
 
               <th>
                 ទំហំ
                 <br />
-                尺寸
-              </th>
-
-              <th>
-                តម្លៃ
-                <br />
-                单价
+                CBM
               </th>
 
               <th>
                 ទម្ងន់
                 <br />
-                重量
+                KG
+              </th>
+
+              <th>
+                តម្លៃ
+                <br />
+                Rate
               </th>
 
               <th>
                 សរុប
                 <br />
-                合计
+                Amount
               </th>
-
             </tr>
-
           </thead>
 
           <tbody>
-
-            {items.length > 0 ? (
-              items.map((item, index) => (
-
-                <tr key={index}>
-
-                  <td>
-                    {index + 1}
-                  </td>
-
-                  
-                  <td>
-                    {item.china_waybill_number ||
-                      item.tracking_number ||
-                      item.hfl_package_code ||
-                      item.package_code ||
-                      item.package_number ||
-                      item.code ||
-                      "—"}
-                  </td>
-
-
-                  <td className="item-name">
-                    {item.product_name ||
-                      item.description ||
-                      "—"}
-                  </td>
-
-                  <td>
-                    {item.package_number ||
-                      item.package_code ||
-                      item.code ||
-                      "—"}
-                  </td>
-
-                  <td>
-                    {Number(
-                      item.quantity || 1
-                    )}
-                  </td>
-
-                  <td>
-                    {fixed(item.cbm, 3)}
-                  </td>
-
-                  <td>
-                    {money(item.unit_price)}
-                  </td>
-
-                  <td>
-                    {fixed(item.weight, 2)}
-                  </td>
-
-                  <td className="amount">
-                    {money(item.amount)}
-                  </td>
-
-                </tr>
-
-              ))
-            ) : (
-
-              <tr>
-
-                <td>1</td>
+            {gridRows.map((item, i) => (
+              <tr
+                key={
+                  item?.package_id ??
+                  `empty-${i}`
+                }
+              >
+                <td>{i + 1}</td>
 
                 <td>
-                  {meta.tracking_number || "—"}
+                  {item
+                    ? text(
+                        item.tracking_number ||
+                        item.hfl_package_code ||
+                        item.package_number ||
+                        meta.tracking_number
+                      )
+                    : '—'}
                 </td>
 
                 <td>
-                  China → Cambodia
+                  {item
+                    ? text(
+                        item.china_waybill_number ||
+                        meta.china_waybill_number
+                      )
+                    : '—'}
+                </td>
+
+                <td className="description">
+                  {item
+                    ? text(
+                        item.product_name ||
+                        item.description
+                      )
+                    : '—'}
                 </td>
 
                 <td>
-                  {meta.hfl_package_code ||
-                    meta.package_id ||
-                    "—"}
-                </td>
-
-                <td>1</td>
-
-                <td>
-                  {fixed(totalCbm, 3)}
+                  {item
+                    ? text(item.quantity ?? 1)
+                    : '—'}
                 </td>
 
                 <td>
-                  {money(subtotal)}
+                  {item
+                    ? decimal(item.cbm, 3)
+                    : '—'}
                 </td>
 
                 <td>
-                  {fixed(totalWeight, 2)}
+                  {item
+                    ? decimal(item.weight, 2)
+                    : '—'}
                 </td>
 
-                <td className="amount">
-                  {money(grandTotal)}
+                <td>
+                  {item
+                    ? money(item.unit_price)
+                    : '—'}
                 </td>
 
+                <td>
+                  {item
+                    ? money(item.amount)
+                    : '—'}
+                </td>
               </tr>
-
-            )}
-
-            <tr className="empty-row">
-              <td>2</td>
-              <td />
-              <td />
-              <td />
-              <td />
-              <td />
-              <td />
-              <td />
-              <td />
-            </tr>
-
-            <tr className="empty-row">
-              <td>3</td>
-              <td />
-              <td />
-              <td />
-              <td />
-              <td />
-              <td />
-              <td />
-              <td />
-            </tr>
-
+            ))}
           </tbody>
-
         </table>
 
-        {/* =========================
-            NOTES + TOTAL
-        ========================== */}
+        {/* ============================================= */}
+        {/* TERMS / EXTRA CHARGES / GRAND TOTAL           */}
+        {/* ============================================= */}
 
-        <section className="bottom-section">
+        <section className="hfl-bill-bottom">
+          {/* TERMS */}
+          <div className="hfl-terms">
+            <strong>
+              ⚒ លក្ខខណ្ឌ / 条款及说明
+            </strong>
 
-          <div className="notes-area">
+            <p>
+              <b>ចំណាំ៖</b> មុនទទួលទំនិញ សូមពិនិត្យទម្ងន់
+              ទំហំ និងតម្លៃឱ្យបានត្រឹមត្រូវ។
+              ទំនិញដែលបានចុះហត្ថលេខាទទួលរួច
+              ក្រុមហ៊ុនមិនទទួលខុសត្រូវចំពោះការខ្វះខាត
+              ដែលមិនបានរាយការណ៍នោះទេ។
+            </p>
 
-            <div>
-              ចំណាំ៖ មុនទទួលទំនិញសូមពិនិត្យម៉ែត្រគីប គីឡូក្រាម និងតម្លៃអោយបានត្រឹមត្រូវទំនិញត្រូវបានត្រួតពិនិត្យ
-              និងរាប់តាមព័ត៌មានដែលបានបញ្ជាក់
-              នៅលើវិក្កយបត្រ សម្រាប់ទំនិញដែរទទួលរួចក្រុមហ៊ុនមិនទទួលខុសត្រូវ។
-            </div>
+            <p>
+              注意：在收货前，请仔细检查货物的重量、
+              体积和价格。签收前应根据发票核对货物信息。
+            </p>
 
-            <div className="chinese-note">
-              注意：在收货前，请仔细检查货物的重量、体积和价格是否正确。货物应按照发票上所列信息进行核对和清点。对于已经签收的货物，公司不承担任何责任。
-            </div>
+            <p>
+              ក្រុមហ៊ុនមិនទទួលខុសត្រូវចំពោះទំនិញងាយបែកបាក់
+              ឬខូចខាត ដែលមិនបានវេចខ្ចប់ត្រឹមត្រូវ។
+            </p>
 
-            <div>
-              ក្រុមហ៊ុនមិនទទួលខុសត្រូវចំពោះទំនិញដែលងាយខូចបែកបាក់ ចំពោះទំនិញដែលងាយបែកបាក់ក្រុមហ៊ុនគ្មានសំណងនោះទេ។ សូមចូលចិត្តទំនិញដែលងាយខូចបែកបាក់សូមប្រើប្រអប់ក្រដាសក្រណាត់ដើម្បីការពារទំនិញ។ 
-              
-              <div className="chinese-note">
-              公司对易碎、易损坏的货物不承担责任。对于易碎、易损坏的货物，公司不提供任何赔偿。
-              请注意：如果您的货物属于易碎或易损坏物品，请使用纸箱、泡沫、布料等适当的包装材料进行加固和保护，以避免运输过程中发生损坏。
-            </div>
-            </div>
-
+            <p>
+              公司不对包装不当造成的易碎、
+              易损货物损坏承担责任。
+            </p>
           </div>
 
-          <div className="total-area">
+          {/* FEES */}
+          <div className="hfl-fees">
+            <div className="hfl-fee-lines">
+              {[...fees].sort((a, b) => hflFeePrintIndex(a) - hflFeePrintIndex(b)).map((fee, i) => (
+                <div
+                  key={`${fee.description}-${i}`}
+                >
+                  <span>
+                    {text(HFL_FEE_LABELS[fee.description] || fee.description)}
+                  </span>
 
-            <div>
-              <span>
-                ការបញ្ចុះតម្លៃ
-              </span>
+                  <strong>
+                    {money(fee.amount)}
+                  </strong>
+                </div>
+              ))}
 
-              <strong>
-                {money(discount)}
-              </strong>
+              {discount > 0 && (
+                <div>
+                  <span>
+                    Discount / 折扣
+                  </span>
+
+                  <strong>
+                    −{money(discount)}
+                  </strong>
+                </div>
+              )}
+
+              {tax > 0 && (
+                <div>
+                  <span>
+                    Tax / 税
+                  </span>
+
+                  <strong>
+                    {money(tax)}
+                  </strong>
+                </div>
+              )}
+
+              {!fees.length &&
+                discount === 0 &&
+                tax === 0 && (
+                  <div>
+                    <span>
+                      Shipping / 运费
+                    </span>
+
+                    <strong>
+                      {money(
+                        invoice.subtotal ??
+                        grandTotal
+                      )}
+                    </strong>
+                  </div>
+                )}
             </div>
 
-            <div className="total-final">
-
+            {/* GRAND TOTAL */}
+            <div className="hfl-grand">
               <span>
-                សរុប / 合计
+                តម្លៃបង់ប្រាក់សរុប / 合计
               </span>
 
               <strong>
                 {money(grandTotal)}
               </strong>
-
             </div>
-
           </div>
-
         </section>
 
-        {/* =========================
-            SIGNATURE
-        ========================== */}
+        {/* ============================================= */}
+        {/* SIGNATURES                                   */}
+        {/* ============================================= */}
 
-        <section className="signature-area">
-
+        <section className="hfl-signatures">
           <div>
             <strong>
-              អ្នករៀបចំវិក្កយបត្រ
+              អ្នកចេញវិក្កយបត្រ / 制单人
             </strong>
 
-            <span>
-              制单人:
-            </span>
+            <div className="sign-line" />
 
-            <div className="signature-line" />
+            <span>
+              Date: ____ / ____ / ______
+            </span>
           </div>
 
           <div>
             <strong>
-              អតិថិជន
+              ហត្ថលេខាអតិថិជន / 客户签收
             </strong>
 
+            <div className="sign-line" />
+
             <span>
-              客户签收:
+              Date: ____ / ____ / ______
             </span>
-
-            <div className="signature-line" />
           </div>
-
         </section>
 
+        {/* FOOTER */}
+        <footer className="hfl-print-footer">
+          វិក្កយបត្រផ្លូវការ HFL Logistics —
+          សូមរក្សាទុកសម្រាប់ជាឯកសារយោង
+        </footer>
       </main>
     </div>
   );
