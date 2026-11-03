@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Expense;
 use App\Models\Income;
 use App\Models\Invoice;
+use App\Models\Package;
 use App\Models\Payment;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -187,8 +188,30 @@ class FinanceController extends ApiController
             ->orderByDesc('id')
             ->paginate((int) ($data['per_page'] ?? 25));
 
+$packageIds = $invoices->getCollection()
+    ->flatMap(function ($invoice) {
+        return collect($invoice->items ?? [])
+            ->filter(fn ($item) => is_array($item))
+            ->pluck('package_id')
+            ->filter(fn ($id) => is_numeric($id));
+    })
+    ->unique()
+    ->values();
+
+$packagesById = $packageIds->isEmpty()
+    ? collect()
+    : Package::query()
+        ->whereIn('id', $packageIds->all())
+        ->get([
+            'id',
+            'tracking_number',
+            'china_waybill_number',
+        ])
+        ->keyBy(fn ($package) => (string) $package->id);
+
+
         $invoices->getCollection()->transform(
-            function ($invoice) use ($today) {
+            function ($invoice) use ($today, $packagesById) {
                 $outstanding = (float) ($invoice->outstanding ?? 0);
                 $paid = (float) ($invoice->paid_amount ?? 0);
 
@@ -221,12 +244,25 @@ class FinanceController extends ApiController
                     fn ($item) => (string) $item['package_id']
                 );
 
-                $trackingNumbers = $shippingItems
-                    ->pluck('tracking_number')
-                    ->filter()
+                            
+                $trackingNumbers = $uniquePackages
+                    ->map(function ($item) use ($packagesById) {
+                        $package = $packagesById->get(
+                            (string) $item['package_id']
+                        );
+
+                        return $package?->tracking_number
+                            ?: ($item['tracking_number'] ?? null)
+                            ?: $package?->china_waybill_number
+                            ?: ($item['china_waybill_number'] ?? null);
+                    })
+                    ->filter(fn ($number) =>
+                        trim((string) $number) !== ''
+                    )
                     ->unique()
                     ->values()
                     ->all();
+
 
                 $meta = is_array($invoice->meta)
                     ? $invoice->meta
