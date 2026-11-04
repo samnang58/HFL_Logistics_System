@@ -52,3 +52,9 @@ backend/storage/framework/testing/*
 # Backup files
 *.save
 *.bak
+
+# HFL private database backups
+/backend/storage/app/private/customer-migration-backups/
+
+# ERPNext customer exports
+Customer.csv
