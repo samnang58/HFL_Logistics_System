@@ -11,6 +11,9 @@ import {
 
 const EMPTY_DASHBOARD = {
   packages: 0,
+  historicalPackages: 0,
+  historicalTrackingEvents: 0,
+  totalPackageRecords: 0,
   containers: 0,
   shipments: 0,
   inTransit: 0,
@@ -93,6 +96,12 @@ export default function HflLogisticsHome() {
       setDashboard({
         ...EMPTY_DASHBOARD,
         packages: Number(data.packages || 0),
+        historicalPackages: Number(data.historical_packages || 0),
+        historicalTrackingEvents: Number(data.historical_tracking_events || 0),
+        totalPackageRecords: Number(
+          data.total_package_records ??
+          ((data.packages || 0) + (data.historical_packages || 0))
+        ),
         containers: Number(data.containers || 0),
         shipments: Number(data.shipments || 0),
         inTransit: Number(data.in_transit || 0),
@@ -177,7 +186,7 @@ export default function HflLogisticsHome() {
 
         {/* KPI */}
         <section className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
-          <Kpi icon={Package} label="Total Packages" value={dashboard.packages.toLocaleString()} detail="All active packages" onClick={() => navigate("/hfl-package")} />
+          <Kpi icon={Package} label="Package Records" value={dashboard.totalPackageRecords.toLocaleString()} detail={`${dashboard.packages.toLocaleString()} current · ${dashboard.historicalPackages.toLocaleString()} historical`} onClick={() => navigate("/hfl-package")} />
           <Kpi icon={Container} label="Containers" value={dashboard.containers} detail="Active containers" tone="violet" onClick={() => navigate("/container")} />
           <Kpi icon={Ship} label="Shipments" value={dashboard.shipments} detail="Open shipments" tone="blue" onClick={() => navigate("/shipments")} />
           <Kpi icon={Truck} label="In Transit" value={dashboard.inTransit} detail="Moving to Cambodia" tone="amber" onClick={() => navigate("/tracking")} />
@@ -185,6 +194,69 @@ export default function HflLogisticsHome() {
           <Kpi icon={Clock3} label="Waiting Receive" value={dashboard.waitingReceive} detail="Needs action" tone="amber" onClick={() => navigate("/cambodia-warehouse")} />
           <Kpi icon={CheckCircle2} label="Delivered" value={dashboard.delivered} detail={`${deliveredRate}% of packages`} tone="emerald" onClick={() => navigate("/delivery")} />
           <Kpi icon={DollarSign} label="Outstanding" value={`$${dashboard.outstanding.toLocaleString()}`} detail="Customer receivables" tone="red" onClick={() => navigate("/accounting/payment-entry")} />
+        </section>
+
+        {/* ERPNext migration summary — informational only */}
+        <section className="rounded-2xl border border-slate-200 bg-white p-5">
+          <div className="mb-4">
+            <h2 className="font-bold text-slate-900">
+              HFL Records & ERPNext Migration
+            </h2>
+            <p className="mt-1 text-xs text-slate-500">
+              Historical records are included in visibility,
+              not in live warehouse or financial calculations.
+            </p>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-3">
+            <button
+              type="button"
+              onClick={() => navigate("/hfl-package")}
+              className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-left hover:border-blue-300"
+            >
+              <p className="text-xs text-slate-500">
+                HFL Current Packages
+              </p>
+              <p className="mt-2 text-2xl font-bold text-blue-700">
+                {dashboard.packages.toLocaleString()}
+              </p>
+              <p className="mt-1 text-xs text-slate-500">
+                Operational records
+              </p>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => navigate("/hfl-package")}
+              className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-left hover:border-blue-300"
+            >
+              <p className="text-xs text-slate-500">
+                Old Packages from ERPNext
+              </p>
+              <p className="mt-2 text-2xl font-bold text-slate-900">
+                {dashboard.historicalPackages.toLocaleString()}
+              </p>
+              <p className="mt-1 text-xs text-slate-500">
+                Imported historical records
+              </p>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => navigate("/hfl-package")}
+              className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-left hover:border-blue-300"
+            >
+              <p className="text-xs text-slate-500">
+                Old Tracking History
+              </p>
+              <p className="mt-2 text-2xl font-bold text-slate-900">
+                {dashboard.historicalTrackingEvents.toLocaleString()}
+              </p>
+              <p className="mt-1 text-xs text-slate-500">
+                Open an old package to view its timeline
+              </p>
+            </button>
+          </div>
         </section>
 
         {/* Flow + Quick Operations */}

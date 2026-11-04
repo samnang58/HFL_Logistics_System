@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
+import LegacyPackageBrowser from "../components/LegacyPackageBrowser.jsx";
+import LegacyPackageInlineRows from "../components/LegacyPackageInlineRows.jsx";
 import {
   AlertCircle, AlertTriangle, ArrowRight, Building2, CheckCircle2,
   Clock3, Eye, Filter, MapPin, Package, Pencil, Plus, Search,
@@ -442,7 +444,7 @@ function EmptyState({ loading }) {
   );
 }
 
-export default function HFLPackageManagement() {
+function LiveHFLPackageManagement() {
   const nav = useNavigate();
   const [filters, setFilters] = useState({ search: "", status: "All Status", shippingMode: "All Modes" });
   const [view, setView] = useState("all");
@@ -455,6 +457,7 @@ export default function HFLPackageManagement() {
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState(null);
   const [logs, setLogs] = useState([]);
+  const [historicalTotal, setHistoricalTotal] = useState(0);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -533,6 +536,7 @@ export default function HFLPackageManagement() {
         </div>
 
         <div className="flex flex-wrap gap-2">
+
           <button onClick={doSync} disabled={syncing} className="inline-flex h-10 items-center gap-2 rounded-lg bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:opacity-60">
             <RefreshCw size={16} className={syncing ? "animate-spin" : ""} />
             {syncing ? "Syncing China..." : "Sync China"}
@@ -556,7 +560,7 @@ export default function HFLPackageManagement() {
       )}
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
-        <Stat icon={Package} title="All Packages" value={counts.all} onClick={() => setView("all")} />
+        <Stat icon={Package} title="All Packages" value={counts.all + historicalTotal} onClick={() => setView("all")} />
         <Stat icon={Warehouse} title="China Warehouse" value={counts.china} color="amber" onClick={() => setView("china")} />
         <Stat icon={Ship} title="In Transit" value={counts.transit} onClick={() => setView("transit")} />
         <Stat icon={Building2} title="Cambodia" value={counts.cambodia} color="emerald" onClick={() => setView("cambodia")} />
@@ -600,7 +604,7 @@ export default function HFLPackageManagement() {
           <div className="mb-4 flex flex-wrap gap-2">
             {STATUS_GROUPS.map((g) => (
               <button key={g.key} onClick={() => setView(g.key)} className={`rounded-lg px-3 py-2 text-xs font-semibold ${view === g.key ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}>
-                {g.label} <span className="ml-1 opacity-70">{counts[g.key]}</span>
+                {g.label} <span className="ml-1 opacity-70">{g.key === "all" ? counts[g.key] + historicalTotal : counts[g.key]}</span>
               </button>
             ))}
           </div>
@@ -704,6 +708,14 @@ export default function HFLPackageManagement() {
                   </tr>
                 );
               })}
+              {view === "all" &&
+                filters.status === "All Status" &&
+                filters.shippingMode === "All Modes" && (
+                  <LegacyPackageInlineRows
+                    search={filters.search}
+                    onTotal={setHistoricalTotal}
+                  />
+                )}
             </tbody>
           </table>
         </div>
@@ -714,4 +726,15 @@ export default function HFLPackageManagement() {
       <Modal open={modal} onClose={() => { setModal(false); setEditing(null); }} editing={editing} onSubmit={save} busy={busy} onPhotosChanged={load} />
     </div>
   );
+}
+
+
+export default function HFLPackageManagement() {
+  const location = useLocation();
+  const historical =
+    new URLSearchParams(location.search).get("tab") === "history";
+
+  return historical
+    ? <LegacyPackageBrowser />
+    : <LiveHFLPackageManagement />;
 }

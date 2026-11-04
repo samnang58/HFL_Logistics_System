@@ -12,6 +12,7 @@ use App\Models\Expense;
 use App\Models\TrackingEvent;
 use App\Models\PackageSyncLog;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 class DashboardController extends ApiController
 {
@@ -20,6 +21,14 @@ class DashboardController extends ApiController
         $packageQuery = Package::query();
 
         $packages = (clone $packageQuery)->count();
+
+        $legacyPackages = Schema::hasTable('legacy_packages')
+            ? DB::table('legacy_packages')->count()
+            : 0;
+
+        $legacyTrackingEvents = Schema::hasTable('legacy_package_history')
+            ? DB::table('legacy_package_history')->count()
+            : 0;
         $containers = Container::count();
         $shipments = Shipment::count();
 
@@ -51,6 +60,9 @@ class DashboardController extends ApiController
         return $this->ok([
             'customers' => Customer::count(),
             'packages' => $packages,
+            'historical_packages' => $legacyPackages,
+            'historical_tracking_events' => $legacyTrackingEvents,
+            'total_package_records' => $packages + $legacyPackages,
             'containers' => $containers,
             'shipments' => $shipments,
             'in_transit' => $inTransit,

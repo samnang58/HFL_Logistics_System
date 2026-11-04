@@ -152,6 +152,16 @@ Route::prefix('v1')->group(function () {
                 CustomerController::class,
                 'show360',
             ]);
+
+            Route::get('/customers/{id}/legacy-packages', [
+                \App\Http\Controllers\LegacyPackageController::class,
+                'index',
+            ]);
+
+            Route::get('/customers/{id}/legacy-packages/{archiveId}', [
+                \App\Http\Controllers\LegacyPackageController::class,
+                'show',
+            ])->whereNumber('archiveId');
         });
 
         Route::middleware('permission:customers.manage')->group(function () {
@@ -174,6 +184,19 @@ Route::prefix('v1')->group(function () {
 
         Route::post('/packages/{id}/movement', [PackageController::class, 'updateMovement'])
             ->middleware('permission:packages.manage');
+
+        // Read-only ERPNext historical packages.
+        Route::middleware('permission:packages.view')->group(function () {
+            Route::get('/legacy-packages', [
+                \App\Http\Controllers\LegacyPackageBrowserController::class,
+                'index',
+            ]);
+
+            Route::get('/legacy-packages/{id}', [
+                \App\Http\Controllers\LegacyPackageBrowserController::class,
+                'show',
+            ])->whereNumber('id');
+        });
 
         Route::middleware('permission:packages.view')->group(function () {
             Route::apiResource('packages', PackageController::class)
