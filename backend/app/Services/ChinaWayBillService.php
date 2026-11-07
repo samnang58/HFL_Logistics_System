@@ -8,50 +8,19 @@ use RuntimeException;
 class ChinaWayBillService
 {
     /**
-     * CHINA_API_MODE=mock  -> use the built-in FAKE China API (development only).
-     * CHINA_API_MODE=real  -> call the real China API (default).
-     * The fake is never used when APP_ENV=production.
+     * Mock API is disabled.
+     * Real API requests require CHINA_API_MODE=real
+     * and valid China API credentials.
      */
     public function isMock(): bool
     {
-        return strtolower(trim((string) env('CHINA_API_MODE', 'real'))) === 'mock'
-            && !app()->environment('production');
-    }
-
-    /**
-     * Calls the fake API inside the same PHP process, so it also works with a
-     * single-worker `php artisan serve` (an HTTP call to itself would hang).
-     */
-    private function queryMock(int $page, int $limit, ?string $insideNo): array
-    {
-        $appUrl = rtrim((string) config('app.url', 'http://127.0.0.1:8000'), '/');
-
-        $request = \Illuminate\Http\Request::create(
-            $appUrl . '/api/v1/mock-china/WayBill/QueryWayBillSpeed',
-            'POST',
-            [
-                'page' => $page,
-                'limit' => $limit,
-                'InsideNO' => $insideNo ?? '',
-                'Token' => (string) env('CHINA_MOCK_TOKEN', 'mock-token'),
-            ]
-        );
-
-        $json = app(\App\Http\Controllers\MockWayBillApiController::class)
-            ->query($request)
-            ->getData(true);
-
-        if (!is_array($json) || (string) ($json['code'] ?? '') !== '0') {
-            throw new RuntimeException((string) ($json['msg'] ?? 'Fake China API failed.'));
-        }
-
-        return $json;
+        return false;
     }
 
     public function query(int $page = 1, int $limit = 100, ?string $insideNo = null, ?string $dateFrom = null, ?string $dateTo = null): array
     {
-        if ($this->isMock()) {
-            return $this->queryMock($page, $limit, $insideNo);
+        if (strtolower(trim((string) env('CHINA_API_MODE', 'disabled'))) !== 'real') {
+            throw new RuntimeException('China API is disabled until real mode is enabled.');
         }
 
         $base = rtrim((string) env('CHINA_API_URL'), '/');

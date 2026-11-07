@@ -37,6 +37,8 @@ export const NAV_SECTIONS = [
     section: "FINANCE",
     items: [
       { key: "finance", label: "Finance Control Center", icon: CircleDollarSign, path: "/finance" },
+      { key: "archive-invoices", label: "ERPNext Invoice History", icon: FileText, path: "/finance/legacy-invoices" },
+      { key: "archive-payments", label: "ERPNext Payment History", icon: Database, path: "/finance/legacy-payments" },
       { key: "invoices", label: "Invoices", icon: Receipt, path: "/accounting/sales-invoice" },
       { key: "payments", label: "Payments", icon: CreditCard, path: "/accounting/payment-entry" },
       { key: "receipts", label: "Receipts", icon: FileText, path: "/finance" },
@@ -76,6 +78,8 @@ export const GLOBAL_SEARCH_ITEMS = [
   { label: "Customers", path: "/customer", keywords: "customer customer id history" },
   { label: "Invoices", path: "/accounting/sales-invoice", keywords: "invoice bill outstanding" },
   { label: "Payments", path: "/accounting/payment-entry", keywords: "payment receipt paid" },
+  { label: "ERPNext Invoice History", path: "/finance/legacy-invoices", keywords: "legacy historical erpnext invoice archive" },
+  { label: "ERPNext Payment History", path: "/finance/legacy-payments", keywords: "legacy historical erpnext payment archive" },
   { label: "Pricing", path: "/pricing-list", keywords: "pricing rate cbm kg sea land air gc sc" },
 ];
 

@@ -423,6 +423,12 @@ Route::prefix('v1')->group(function () {
         |--------------------------------------------------------------------------
         */
 
+        // Legacy ERPNext Finance: read-only, isolated staging archive.
+        Route::get('/legacy-finance/invoices', [\App\Http\Controllers\LegacyFinanceController::class, 'invoices'])
+            ->middleware('permission:invoice.view');
+        Route::get('/legacy-finance/invoices/{name}', [\App\Http\Controllers\LegacyFinanceController::class, 'invoice'])
+            ->middleware('permission:invoice.view');
+
         Route::get('/invoices', [InvoiceController::class, 'index'])
             ->middleware('permission:invoice.view');
 
@@ -465,6 +471,11 @@ Route::prefix('v1')->group(function () {
         | Payments
         |--------------------------------------------------------------------------
         */
+
+        Route::get('/legacy-finance/payments', [\App\Http\Controllers\LegacyFinanceController::class, 'payments'])
+            ->middleware('permission:payment.view');
+        Route::get('/legacy-finance/payments/{name}', [\App\Http\Controllers\LegacyFinanceController::class, 'payment'])
+            ->middleware('permission:payment.view');
 
         Route::get('/payments', [PaymentController::class, 'index'])
             ->middleware('permission:payment.view');

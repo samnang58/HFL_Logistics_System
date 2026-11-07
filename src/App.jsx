@@ -47,6 +47,7 @@ import BillingManagement from "./pages/BillingManagement.jsx";
 import ContainerManagement from "./pages/ContainerManagement.jsx";
 import DeliveryManagement from "./pages/DeliveryManagement.jsx";
 import FinanceControlCenter from "./pages/FinanceControlCenter.jsx";
+import LegacyFinanceArchive from "./pages/LegacyFinanceArchive.jsx";
 import ReportsControlCenter from "./pages/ReportsControlCenter.jsx";
 import InvoicePrintView from "./pages/InvoicePrintView.jsx";
 import InvoiceBillDetail from "./pages/InvoiceBillDetail.jsx";
@@ -97,6 +98,8 @@ const BUILT_ROUTES = {
   "/container": ContainerManagement,
   "/delivery": DeliveryManagement,
   "/finance": FinanceControlCenter,
+  "/finance/legacy-invoices": () => <LegacyFinanceArchive kind="invoices" />,
+  "/finance/legacy-payments": () => <LegacyFinanceArchive kind="payments" />,
   "/reports": ReportsControlCenter,
 
   "/hfl-settings": HFLSettings,

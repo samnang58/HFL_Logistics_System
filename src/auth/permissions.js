@@ -38,6 +38,8 @@ export const PAGE_PERMISSIONS = {
   "/delivery": "deliveries.view",
 
   "/finance": "finance.view",
+  "/finance/legacy-invoices": "invoice.view",
+  "/finance/legacy-payments": "payment.view",
   "/reports": "report.view",
 
   "/hfl-settings": "settings.manage",
